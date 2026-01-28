@@ -1,12 +1,15 @@
+// SmartInsole Webapp (BLE) — app.js 
+
 // UUID firmware
 const SERVICE_UUID  = "12345678-1234-1234-1234-1234567890ab";
 const CHAR_UUID_FSR = "abcd1234-5678-90ab-cdef-1234567890ab"; // FSR notify
 const CHAR_UUID_IMU = "11223344-5566-7788-99aa-bbccddeeff00"; // IMU notify
 
-// rename left e right
+// Device names 
 const DEVNAME_RIGHT = "ESP32-FSR-IMU";
 const DEVNAME_LEFT  = "ESP32-FSR-IMU";
 
+// State
 const state = {
   Right: { device: null, buf: "", lastFSR: null, lastIMU: null },
   Left:  { device: null, buf: "", lastFSR: null, lastIMU: null },
@@ -14,6 +17,7 @@ const state = {
 
 let acquisitionRunning = false;
 
+// UI
 const el = {
   btnRight: document.getElementById("btnRight"),
   btnLeft: document.getElementById("btnLeft"),
@@ -33,14 +37,10 @@ function log(msg) {
   el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 4000);
 }
 
-// debug
-if (el.log) el.log.textContent = "";
-log("JS caricato ✅");
-if (el.jsOk) el.jsOk.textContent = "JS caricato ✅";
-
-function setStatus(side, ok, extra="") {
+function setStatus(side, ok, extra = "") {
   const target = (side === "Right") ? el.stRight : el.stLeft;
-  target.textContent = `${side}: ${ok ? "connesso" : "non connesso"} ${extra}`;
+  if (!target) return;
+  target.textContent = `${side}: ${ok ? "connesso" : "non connesso"} ${extra}`.trim();
 }
 
 function parseFSR(line) {
@@ -53,14 +53,18 @@ function parseIMU(line) {
   // IMU,ax,ay,az,gx,gy,gz,temp,pitch,roll,ms
   const p = line.split(",");
   if (p[0] !== "IMU" || p.length < 10) return null;
+
   const pitch = Number(p[8]);
   const roll  = Number(p[9]);
   if (!Number.isFinite(pitch) || !Number.isFinite(roll)) return null;
+
   return { pitch, roll };
 }
 
 function updateOut() {
+  if (!el.out) return;
   const r = state.Right, l = state.Left;
+
   const txt = `RIGHT
 FSR: ${r.lastFSR ? r.lastFSR.join(", ") : "—"}
 IMU: ${r.lastIMU ? `${r.lastIMU.pitch.toFixed(1)}°, ${r.lastIMU.roll.toFixed(1)}°` : "—"}
@@ -72,16 +76,17 @@ IMU: ${l.lastIMU ? `${l.lastIMU.pitch.toFixed(1)}°, ${l.lastIMU.roll.toFixed(1)
   el.out.textContent = txt;
 }
 
-
 function onChunk(side, chunk) {
-  if (!acquisitionRunning)
-  
+  // Start/Stop
+  if (!acquisitionRunning) return;
+
   const s = state[side];
-  s.buf += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  s.buf += String(chunk).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
   while (true) {
     const idx = s.buf.indexOf("\n");
     if (idx === -1) break;
+
     const line = s.buf.slice(0, idx).trim();
     s.buf = s.buf.slice(idx + 1);
     if (!line) continue;
@@ -95,6 +100,42 @@ function onChunk(side, chunk) {
     }
   }
 
+  updateOut();
+}
+
+function startAcquisition() {
+  acquisitionRunning = true;
+  if (el.btnStart) el.btnStart.disabled = true;
+  if (el.btnStop)  el.btnStop.disabled  = false;
+  log("Acquisizione START ▶️");
+}
+
+function stopAcquisition() {
+  acquisitionRunning = false;
+  if (el.btnStart) el.btnStart.disabled = false;
+  if (el.btnStop)  el.btnStop.disabled  = true;
+  log("Acquisizione STOP ⏹️");
+}
+
+function resetSide(side) {
+  state[side].buf = "";
+  state[side].lastFSR = null;
+  state[side].lastIMU = null;
+  state[side].device = null;
+  setStatus(side, false);
+}
+
+function disconnectAll() {
+  ["Right", "Left"].forEach(side => {
+    const d = state[side].device;
+    try {
+      if (d?.gatt?.connected) d.gatt.disconnect();
+    } catch (e) {}
+    resetSide(side);
+    log(`${side}: disconnesso manualmente`);
+  });
+
+  stopAcquisition();
   updateOut();
 }
 
@@ -114,7 +155,9 @@ async function connectSide(side) {
 
   device.addEventListener("gattserverdisconnected", () => {
     log(`${side}: disconnesso`);
-    setStatus(side, false);
+    resetSide(side);
+    stopAcquisition(); 
+    updateOut();
   });
 
   const server = await device.gatt.connect();
@@ -138,63 +181,40 @@ async function connectSide(side) {
   state[side].device = device;
   setStatus(side, true, `(${device.name})`);
   log(`${side}: connesso a ${device.name}`);
+
+  // auto-start 
   if (!acquisitionRunning) startAcquisition();
 }
 
-function startAcquisition() {
-  acquisitionRunning = true;
-  el.btnStart.disabled = true;
-  el.btnStop.disabled = false;
-  log("Acquisizione START ▶️");
+// ---- Wiring 
+function must(elm, name) {
+  if (!elm) log(`❌ Elemento mancante: ${name}`);
+  return !!elm;
 }
 
-function stopAcquisition() {
-  acquisitionRunning = false;
-  el.btnStart.disabled = false;
-  el.btnStop.disabled = true;
-  log("Acquisizione STOP ⏹️");
-}
+if (el.log) el.log.textContent = "";
+log("JS caricato ✅");
+if (el.jsOk) el.jsOk.textContent = "JS caricato ✅";
 
-function disconnectAll() {
-  ["Right", "Left"].forEach(side => {
-    const d = state[side].device;
-    try {
-      if (d?.gatt?.connected) d.gatt.disconnect();
-    } catch (e) {}
-
-    state[side].device = null;
-    state[side].buf = "";
-    state[side].lastFSR = null;
-    state[side].lastIMU = null;
-
-    setStatus(side, false);
-    log(`${side}: disconnesso manualmente`);
-  });
-
-  stopAcquisition();
-  updateOut();
-}
-
-  acquisitionRunning = false;
-  el.btnStart.disabled = false;
-  el.btnStop.disabled = true;
-}
+updateOut();
+if (el.btnStop) el.btnStop.disabled = true;
 
 log("Handler bottoni attivi ✅");
 
-el.btnRight.addEventListener("click", () => {
-  log("Click Right ✅");
-  connectSide("Right").catch(e => log(`Right ERR: ${e?.name || e} | ${e?.message || ""}`));
-});
+if (must(el.btnRight, "btnRight")) {
+  el.btnRight.addEventListener("click", () => {
+    log("Click Right ✅");
+    connectSide("Right").catch(e => log(`Right ERR: ${e?.name || e} | ${e?.message || ""}`));
+  });
+}
 
-el.btnLeft.addEventListener("click", () => {
-  log("Click Left ✅");
-  connectSide("Left").catch(e => log(`Left ERR: ${e?.name || e} | ${e?.message || ""}`));
-});
+if (must(el.btnLeft, "btnLeft")) {
+  el.btnLeft.addEventListener("click", () => {
+    log("Click Left ✅");
+    connectSide("Left").catch(e => log(`Left ERR: ${e?.name || e} | ${e?.message || ""}`));
+  });
+}
 
-el.btnStart.addEventListener("click", startAcquisition);
-el.btnStop.addEventListener("click", stopAcquisition);
-el.btnDisconnect.addEventListener("click", disconnectAll);
-
-
-
+if (must(el.btnStart, "btnStart")) el.btnStart.addEventListener("click", startAcquisition);
+if (must(el.btnStop, "btnStop")) el.btnStop.addEventListener("click", stopAcquisition);
+if (must(el.btnDisconnect, "btnDisconnect")) el.btnDisconnect.addEventListener("click", disconnectAll);
