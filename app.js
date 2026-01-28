@@ -12,6 +12,10 @@ const state = {
 };
 
 const el = {
+  el.log.textContent = "";
+  log("JS caricato ✅");
+  const jsOkEl = document.getElementById("jsOk");
+  if (jsOkEl) jsOkEl.textContent = "JS caricato ✅";
   btnRight: document.getElementById("btnRight"),
   btnLeft: document.getElementById("btnLeft"),
   stRight: document.getElementById("stRight"),
@@ -23,10 +27,6 @@ const el = {
 function log(msg) {
   const t = new Date().toLocaleTimeString();
   el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 4000);
-  el.log.textContent = "";
-  log("JS caricato ✅");
-  document.getElementById("jsOk").textContent = "JS caricato ✅";
-
 }
 
 function setStatus(side, ok, extra="") {
