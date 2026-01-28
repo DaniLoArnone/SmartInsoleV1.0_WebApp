@@ -19,13 +19,14 @@ const el = {
   out: document.getElementById("out"),
   log: document.getElementById("log"),
 };
+  
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 4000);
   el.log.textContent = "";
   log("JS caricato ✅");
   document.getElementById("jsOk").textContent = "JS caricato ✅";
 
-function log(msg) {
-  const t = new Date().toLocaleTimeString();
-  el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 4000);
 }
 
 function setStatus(side, ok, extra="") {
