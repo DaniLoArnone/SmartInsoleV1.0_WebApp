@@ -1,41 +1,42 @@
 
-// SmartInsole Webapp - Step 3 
+// SmartInsole Webapp - Step 4 (ADC->N + N->Kg + GRF)
+
 
 // UUID firmware
 const SERVICE_UUID  = "12345678-1234-1234-1234-1234567890ab";
 const CHAR_UUID_FSR = "abcd1234-5678-90ab-cdef-1234567890ab"; // FSR notify
 const CHAR_UUID_IMU = "11223344-5566-7788-99aa-bbccddeeff00"; // IMU notify
 
-// device 
+// set name in firmware (left/right)
 const DEVNAME_RIGHT = "ESP32-FSR-IMU";
 const DEVNAME_LEFT  = "ESP32-FSR-IMU";
 
+// --- Calibration (placeholder) --- now is not real - replace with real calibration function
+function adcToNewton(adc, sensorIdx, side) {
+  // adc: 0..4095 (o 0..1023)
+  // sensorIdx: 0..4 per S2..S6
+  // side: "Right"/"Left"
+  // TODO: replace with calibration curve(s)
+  const a = 0.0;
+  const b = 0.02; // fake function
+  const n = Math.max(0, a + b * Number(adc || 0));
+  return n;
+}
+
+const G = 9.80665; // -->N/G=Kg
+
 const state = {
-  Right: {
-    device: null,
-    server: null,
-    service: null,
-    chFSR: null,
-    chIMU: null,
-    buf: "",
-    lastFSR: null,
-    lastIMU: null,
-    lastRxMs: 0,
-  },
-  Left: {
-    device: null,
-    server: null,
-    service: null,
-    chFSR: null,
-    chIMU: null,
-    buf: "",
-    lastFSR: null,
-    lastIMU: null,
-    lastRxMs: 0,
-  },
+  Right: { device:null, buf:"", lastFSR:null, lastIMU:null, lastRxMs:0 },
+  Left:  { device:null, buf:"", lastFSR:null, lastIMU:null, lastRxMs:0 },
 };
 
 let acquisitionRunning = false;
+
+// IMU offset
+const imuZero = {
+  Right: { pitch: 0, roll: 0 },
+  Left:  { pitch: 0, roll: 0 },
+};
 
 const el = {
   btnRight: document.getElementById("btnRight"),
@@ -48,15 +49,18 @@ const el = {
   btnStart: document.getElementById("btnStart"),
   btnStop: document.getElementById("btnStop"),
   btnDisconnect: document.getElementById("btnDisconnect"),
+  unitKg: document.getElementById("unitKg"),
+  btnZeroIMU: document.getElementById("btnZeroIMU"),
+  btnReset: document.getElementById("btnReset"),
 };
 
 function log(msg) {
   const t = new Date().toLocaleTimeString();
   if (!el.log) return;
-  el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 6000);
+  el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 7000);
 }
 
-function safeSetText(node, text) {
+function setText(node, text) {
   if (node) node.textContent = text;
 }
 
@@ -76,12 +80,48 @@ function parseIMU(line) {
   // "IMU,ax,ay,az,gx,gy,gz,temp,pitch,roll,ms"
   const p = line.split(",");
   if (p[0] !== "IMU" || p.length < 10) return null;
-
   const pitch = Number(p[8]);
   const roll  = Number(p[9]);
   if (!Number.isFinite(pitch) || !Number.isFinite(roll)) return null;
-
   return { pitch, roll };
+}
+
+function anyConnected() {
+  return (state.Right.device && state.Right.device.gatt?.connected) ||
+         (state.Left.device && state.Left.device.gatt?.connected);
+}
+
+function updateButtons() {
+  if (el.btnStart && el.btnStop) {
+    el.btnStart.disabled = acquisitionRunning || !anyConnected();
+    el.btnStop.disabled  = !acquisitionRunning || !anyConnected();
+  }
+}
+
+function formatForce(n) {
+  const asKg = !!el.unitKg?.checked;
+  if (asKg) return `${(n / G).toFixed(2)} kg`;
+  return `${n.toFixed(2)} N`;
+}
+
+function computeSideForces(side) {
+  const s = state[side];
+  if (!s.lastFSR) return null;
+
+  const adc = s.lastFSR;
+  const n = adc.map((v, i) => adcToNewton(v, i, side));
+  const grf = n.reduce((a, b) => a + b, 0);
+
+  return { adc, n, grf };
+}
+
+function computeIMUShown(side) {
+  const s = state[side];
+  if (!s.lastIMU) return null;
+  return {
+    pitch: s.lastIMU.pitch - imuZero[side].pitch,
+    roll:  s.lastIMU.roll  - imuZero[side].roll,
+  };
 }
 
 function updateOut() {
@@ -90,17 +130,34 @@ function updateOut() {
   const rRx = r.lastRxMs ? `${Math.round((Date.now() - r.lastRxMs) / 1000)}s fa` : "—";
   const lRx = l.lastRxMs ? `${Math.round((Date.now() - l.lastRxMs) / 1000)}s fa` : "—";
 
+  const R = computeSideForces("Right");
+  const L = computeSideForces("Left");
+
+  const imuR = computeIMUShown("Right");
+  const imuL = computeIMUShown("Left");
+
+  const grfR = R ? R.grf : 0;
+  const grfL = L ? L.grf : 0;
+  const grfT = grfR + grfL;
+
   const txt = `RIGHT  (last RX: ${rRx})
-FSR: ${r.lastFSR ? r.lastFSR.join(", ") : "—"}
-IMU: ${r.lastIMU ? `${r.lastIMU.pitch.toFixed(1)}°, ${r.lastIMU.roll.toFixed(1)}°` : "—"}
+FSR ADC: ${R ? R.adc.join(", ") : "—"}
+FSR F:   ${R ? R.n.map(formatForce).join(" | ") : "—"}
+GRF:     ${R ? formatForce(R.grf) : "—"}
+IMU:     ${imuR ? `${imuR.pitch.toFixed(1)}°, ${imuR.roll.toFixed(1)}°` : "—"}
 
 LEFT   (last RX: ${lRx})
-FSR: ${l.lastFSR ? l.lastFSR.join(", ") : "—"}
-IMU: ${l.lastIMU ? `${l.lastIMU.pitch.toFixed(1)}°, ${l.lastIMU.roll.toFixed(1)}°` : "—"}
+FSR ADC: ${L ? L.adc.join(", ") : "—"}
+FSR F:   ${L ? L.n.map(formatForce).join(" | ") : "—"}
+GRF:     ${L ? formatForce(L.grf) : "—"}
+IMU:     ${imuL ? `${imuL.pitch.toFixed(1)}°, ${imuL.roll.toFixed(1)}°` : "—"}
+
+GRF TOTALE: ${formatForce(grfT)}
 
 Acquisizione: ${acquisitionRunning ? "ON" : "OFF"}
+Unità: ${el.unitKg?.checked ? "kg" : "N"}
 `;
-  safeSetText(el.out, txt);
+  setText(el.out, txt);
 }
 
 function onChunk(side, chunk) {
@@ -147,22 +204,18 @@ async function connectSide(side) {
 
   device.addEventListener("gattserverdisconnected", () => {
     log(`${side}: disconnesso`);
-    cleanupSide(side, /*keepLog*/true);
+    cleanupSide(side);
     setStatus(side, false);
+    updateButtons();
     updateOut();
   });
 
+  // Connect
   const server = await device.gatt.connect();
   const service = await server.getPrimaryService(SERVICE_UUID);
 
   const chFSR = await service.getCharacteristic(CHAR_UUID_FSR);
   const chIMU = await service.getCharacteristic(CHAR_UUID_IMU);
-
-  state[side].device = device;
-  state[side].server = server;
-  state[side].service = service;
-  state[side].chFSR = chFSR;
-  state[side].chIMU = chIMU;
 
   // Notifications
   await chFSR.startNotifications();
@@ -177,6 +230,8 @@ async function connectSide(side) {
     onChunk(side, chunk);
   });
 
+  state[side].device = device;
+
   setStatus(side, true, `(${device.name})`);
   log(`${side}: connesso a ${device.name}`);
 
@@ -184,29 +239,11 @@ async function connectSide(side) {
   updateOut();
 }
 
-function updateButtons() {
-  if (!el.btnStart || !el.btnStop) return;
-  el.btnStart.disabled = acquisitionRunning;
-  el.btnStop.disabled = !acquisitionRunning;
-
-  const anyConnected =
-    (state.Right.device && state.Right.device.gatt?.connected) ||
-    (state.Left.device && state.Left.device.gatt?.connected);
-
-  el.btnStart.disabled = acquisitionRunning || !anyConnected;
-  el.btnStop.disabled = !acquisitionRunning || !anyConnected;
-}
-
 function startAcquisition() {
-  const anyConnected =
-    (state.Right.device && state.Right.device.gatt?.connected) ||
-    (state.Left.device && state.Left.device.gatt?.connected);
-
-  if (!anyConnected) {
+  if (!anyConnected()) {
     log("START: nessun device connesso.");
     return;
   }
-
   acquisitionRunning = true;
   log("Acquisizione START ▶️");
   updateButtons();
@@ -220,34 +257,27 @@ function stopAcquisition() {
   updateOut();
 }
 
-function cleanupSide(side, keepLog = false) {
-  const s = state[side];
-  s.buf = "";
-  s.lastFSR = null;
-  s.lastIMU = null;
-  s.lastRxMs = 0;
+function cleanupSide(side) {
+  state[side].buf = "";
+  state[side].lastFSR = null;
+  state[side].lastIMU = null;
+  state[side].lastRxMs = 0;
+  state[side].device = null;
 
-  s.chFSR = null;
-  s.chIMU = null;
-  s.service = null;
-  s.server = null;
-  s.device = null;
-
-  if (!keepLog) log(`${side}: cleanup`);
+  imuZero[side].pitch = 0;
+  imuZero[side].roll = 0;
 }
 
 function disconnectAll() {
   log("Disconnect: richiesta disconnessione…");
-
   acquisitionRunning = false;
 
   ["Right", "Left"].forEach(side => {
     const d = state[side].device;
     try {
       if (d?.gatt?.connected) d.gatt.disconnect();
-    } catch (e) {
-    }
-    cleanupSide(side, true);
+    } catch (e) {}
+    cleanupSide(side);
     setStatus(side, false);
   });
 
@@ -256,30 +286,56 @@ function disconnectAll() {
   updateOut();
 }
 
+function resetVisual() {
+  
+  ["Right", "Left"].forEach(side => {
+    state[side].buf = "";
+    state[side].lastFSR = null;
+    state[side].lastIMU = null;
+    state[side].lastRxMs = 0;
+    imuZero[side].pitch = 0;
+    imuZero[side].roll = 0;
+  });
+  log("Reset: clear valori ✅");
+  updateOut();
+}
+
+function zeroIMU() {
+  ["Right", "Left"].forEach(side => {
+    if (state[side].lastIMU) {
+      imuZero[side].pitch = state[side].lastIMU.pitch;
+      imuZero[side].roll  = state[side].lastIMU.roll;
+    }
+  });
+  log("Zero IMU: azzeramento visuale ✅");
+  updateOut();
+}
+
 // ---- Init ----
 (function init() {
   if (el.log) el.log.textContent = "";
   log("JS caricato ✅");
-  safeSetText(el.jsOk, "JS caricato ✅");
+  setText(el.jsOk, "JS caricato ✅");
 
-  if (el.btnRight) {
-    el.btnRight.addEventListener("click", () => {
-      log("Click Right ✅");
-      connectSide("Right").catch(e => log(`Right ERR: ${e?.name || e} | ${e?.message || ""}`));
-    });
-  }
-  if (el.btnLeft) {
-    el.btnLeft.addEventListener("click", () => {
-      log("Click Left ✅");
-      connectSide("Left").catch(e => log(`Left ERR: ${e?.name || e} | ${e?.message || ""}`));
-    });
-  }
+  if (el.btnRight) el.btnRight.addEventListener("click", () => {
+    log("Click Right ✅");
+    connectSide("Right").catch(e => log(`Right ERR: ${e?.name || e} | ${e?.message || ""}`));
+  });
+
+  if (el.btnLeft) el.btnLeft.addEventListener("click", () => {
+    log("Click Left ✅");
+    connectSide("Left").catch(e => log(`Left ERR: ${e?.name || e} | ${e?.message || ""}`));
+  });
+
   if (el.btnStart) el.btnStart.addEventListener("click", startAcquisition);
   if (el.btnStop) el.btnStop.addEventListener("click", stopAcquisition);
   if (el.btnDisconnect) el.btnDisconnect.addEventListener("click", disconnectAll);
 
+  if (el.unitKg) el.unitKg.addEventListener("change", updateOut);
+  if (el.btnReset) el.btnReset.addEventListener("click", resetVisual);
+  if (el.btnZeroIMU) el.btnZeroIMU.addEventListener("click", zeroIMU);
+
   updateButtons();
   updateOut();
-
   log("Handler bottoni attivi ✅");
 })();
