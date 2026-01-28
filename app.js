@@ -1,10 +1,11 @@
 // UUID firmware
-const SERVICE_UUID      = "12345678-1234-1234-1234-1234567890ab";
-const CHAR_UUID_FSR     = "abcd1234-5678-90ab-cdef-1234567890ab"; // FSR notify
-const CHAR_UUID_IMU     = "11223344-5566-7788-99aa-bbccddeeff00"; // IMU notify
+const SERVICE_UUID  = "12345678-1234-1234-1234-1234567890ab";
+const CHAR_UUID_FSR = "abcd1234-5678-90ab-cdef-1234567890ab"; // FSR notify
+const CHAR_UUID_IMU = "11223344-5566-7788-99aa-bbccddeeff00"; // IMU notify
 
-const DEVNAME_RIGHT = "ESP32-FSR-IMU-Right";
-const DEVNAME_LEFT  = "ESP32-FSR-IMU-Left";
+// rename left e right
+const DEVNAME_RIGHT = "ESP32-FSR-IMU";
+const DEVNAME_LEFT  = "ESP32-FSR-IMU";
 
 const state = {
   Right: { device: null, buf: "", lastFSR: null, lastIMU: null },
@@ -18,17 +19,19 @@ const el = {
   stLeft: document.getElementById("stLeft"),
   out: document.getElementById("out"),
   log: document.getElementById("log"),
+  jsOk: document.getElementById("jsOk"),
 };
-  
+
 function log(msg) {
   const t = new Date().toLocaleTimeString();
+  if (!el.log) return;
   el.log.textContent = `${t}  ${msg}\n` + el.log.textContent.slice(0, 4000);
 }
 
-  el.log.textContent = "";
-  log("JS caricato ✅");
-  const jsOkEl = document.getElementById("jsOk");
-  if (jsOkEl) jsOkEl.textContent = "JS caricato ✅";
+// debug
+if (el.log) el.log.textContent = "";
+log("JS caricato ✅");
+if (el.jsOk) el.jsOk.textContent = "JS caricato ✅";
 
 function setStatus(side, ok, extra="") {
   const target = (side === "Right") ? el.stRight : el.stLeft;
