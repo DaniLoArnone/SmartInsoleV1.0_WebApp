@@ -133,5 +133,15 @@ async function connectSide(side) {
   log(`${side}: connesso a ${device.name}`);
 }
 
-el.btnRight.addEventListener("click", () => connectSide("Right").catch(e => log(`Right ERR: ${e}`)));
-el.btnLeft.addEventListener("click", () => connectSide("Left").catch(e => log(`Left ERR: ${e}`)));
+log("Handler bottoni attivi ✅");
+
+el.btnRight.addEventListener("click", () => {
+  log("Click Right ✅");
+  connectSide("Right").catch(e => log(`Right ERR: ${e?.name || e} | ${e?.message || ""}`));
+});
+
+el.btnLeft.addEventListener("click", () => {
+  log("Click Left ✅");
+  connectSide("Left").catch(e => log(`Left ERR: ${e?.name || e} | ${e?.message || ""}`));
+});
+
