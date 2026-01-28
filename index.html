@@ -7,12 +7,24 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h2>FSR Webapp (Step 1)</h2>
-  <p>Se stai leggendo questo da telefono, GitHub Pages funziona ✅</p>
+  <h2>SmartInsole – Webapp (Step 2: BLE)</h2>
+  <p>Connettiti a <b>Right</b> e/o <b>Left</b> via Bluetooth (Chrome).</p>
 
-  <button id="btnTest">Test JS</button>
-  <pre id="out"></pre>
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+    <button id="btnRight">Connetti Right</button>
+    <span id="stRight">Right: non connesso</span>
+  </div>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+    <button id="btnLeft">Connetti Left</button>
+    <span id="stLeft">Left: non connesso</span>
+  </div>
+
+  <h3>Dati</h3>
+  <pre id="out">—</pre>
+
+  <h3>Log</h3>
+  <pre id="log">—</pre>
 
   <script src="app.js"></script>
 </body>
-</html>
