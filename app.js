@@ -12,6 +12,8 @@ const state = {
   Left:  { device: null, buf: "", lastFSR: null, lastIMU: null },
 };
 
+let acquisitionRunning = false;
+
 const el = {
   btnRight: document.getElementById("btnRight"),
   btnLeft: document.getElementById("btnLeft"),
@@ -20,6 +22,9 @@ const el = {
   out: document.getElementById("out"),
   log: document.getElementById("log"),
   jsOk: document.getElementById("jsOk"),
+  btnStart: document.getElementById("btnStart"),
+  btnStop: document.getElementById("btnStop"),
+  btnDisconnect: document.getElementById("btnDisconnect"),
 };
 
 function log(msg) {
@@ -133,6 +138,36 @@ async function connectSide(side) {
   log(`${side}: connesso a ${device.name}`);
 }
 
+function startAcquisition() {
+  acquisitionRunning = true;
+  el.btnStart.disabled = true;
+  el.btnStop.disabled = false;
+  log("Acquisizione START ▶️");
+}
+
+function stopAcquisition() {
+  acquisitionRunning = false;
+  el.btnStart.disabled = false;
+  el.btnStop.disabled = true;
+  log("Acquisizione STOP ⏹️");
+}
+
+function disconnectAll() {
+  ["Right", "Left"].forEach(side => {
+    const d = state[side].device;
+    if (d && d.gatt.connected) {
+      d.gatt.disconnect();
+      log(`${side}: disconnesso manualmente`);
+    }
+    state[side].device = null;
+    setStatus(side, false);
+  });
+
+  acquisitionRunning = false;
+  el.btnStart.disabled = false;
+  el.btnStop.disabled = true;
+}
+
 log("Handler bottoni attivi ✅");
 
 el.btnRight.addEventListener("click", () => {
@@ -144,4 +179,10 @@ el.btnLeft.addEventListener("click", () => {
   log("Click Left ✅");
   connectSide("Left").catch(e => log(`Left ERR: ${e?.name || e} | ${e?.message || ""}`));
 });
+
+el.btnStart.addEventListener("click", startAcquisition);
+el.btnStop.addEventListener("click", stopAcquisition);
+el.btnDisconnect.addEventListener("click", disconnectAll);
+
+
 
