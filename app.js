@@ -18,10 +18,10 @@ const el = {
   stLeft: document.getElementById("stLeft"),
   out: document.getElementById("out"),
   log: document.getElementById("log"),
+};
   el.log.textContent = "";
   log("JS caricato ✅");
   document.getElementById("jsOk").textContent = "JS caricato ✅";
-};
 
 function log(msg) {
   const t = new Date().toLocaleTimeString();
