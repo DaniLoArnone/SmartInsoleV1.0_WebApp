@@ -74,6 +74,8 @@ IMU: ${l.lastIMU ? `${l.lastIMU.pitch.toFixed(1)}°, ${l.lastIMU.roll.toFixed(1)
 
 
 function onChunk(side, chunk) {
+  if (!acquisitionRunning)
+  
   const s = state[side];
   s.buf += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
@@ -136,6 +138,7 @@ async function connectSide(side) {
   state[side].device = device;
   setStatus(side, true, `(${device.name})`);
   log(`${side}: connesso a ${device.name}`);
+  if (!acquisitionRunning) startAcquisition();
 }
 
 function startAcquisition() {
@@ -155,13 +158,22 @@ function stopAcquisition() {
 function disconnectAll() {
   ["Right", "Left"].forEach(side => {
     const d = state[side].device;
-    if (d && d.gatt.connected) {
-      d.gatt.disconnect();
-      log(`${side}: disconnesso manualmente`);
-    }
+    try {
+      if (d?.gatt?.connected) d.gatt.disconnect();
+    } catch (e) {}
+
     state[side].device = null;
+    state[side].buf = "";
+    state[side].lastFSR = null;
+    state[side].lastIMU = null;
+
     setStatus(side, false);
+    log(`${side}: disconnesso manualmente`);
   });
+
+  stopAcquisition();
+  updateOut();
+}
 
   acquisitionRunning = false;
   el.btnStart.disabled = false;
