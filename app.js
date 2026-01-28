@@ -56,8 +56,7 @@ function parseIMU(line) {
 
 function updateOut() {
   const r = state.Right, l = state.Left;
-  const txt =
-'RIGHT
+  const txt = `RIGHT
 FSR: ${r.lastFSR ? r.lastFSR.join(", ") : "—"}
 IMU: ${r.lastIMU ? `${r.lastIMU.pitch.toFixed(1)}°, ${r.lastIMU.roll.toFixed(1)}°` : "—"}
 
@@ -67,6 +66,7 @@ IMU: ${l.lastIMU ? `${l.lastIMU.pitch.toFixed(1)}°, ${l.lastIMU.roll.toFixed(1)
 `;
   el.out.textContent = txt;
 }
+
 
 function onChunk(side, chunk) {
   const s = state[side];
