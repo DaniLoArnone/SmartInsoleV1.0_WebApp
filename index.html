@@ -26,15 +26,23 @@
     <button id="btnDisconnect">Disconnect</button>
   </div>
 
-  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-  <label style="display:flex; gap:6px; align-items:center;">
-    <input type="checkbox" id="unitKg">
-    Mostra in kg (default: N)
-  </label>
+  <div style="margin-top:12px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+    <label style="display:flex; gap:8px; align-items:center;">
+      <input id="chkKg" type="checkbox" />
+      Mostra in kg (default: N)
+    </label>
+    <button id="btnZeroIMU">Zero IMU</button>
+    <button id="btnReset">Reset (clear)</button>
+  </div>
 
-  <button id="btnZeroIMU">Zero IMU</button>
-  <button id="btnReset">Reset (clear)</button>
- </div>
+  <!-- Recorder -->
+  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+    <input id="patientId" type="text" placeholder="ID paziente / sessione (opz.)" style="min-width:260px;" />
+    <button id="btnRecStart">Start Rec</button>
+    <button id="btnRecStop" disabled>Stop Rec</button>
+    <button id="btnRecDownload" disabled>Download CSV</button>
+    <span id="recStatus" style="font-weight:600;"></span>
+  </div>
 
   <div id="jsOk" style="margin-top:10px; font-weight:600;"></div>
 
@@ -44,6 +52,7 @@
   <h3>Log</h3>
   <pre id="log">—</pre>
 
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>
+
