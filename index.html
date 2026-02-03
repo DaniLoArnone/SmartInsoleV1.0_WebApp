@@ -3,56 +3,76 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>FSR Webapp</title>
+  <title>SmartInsole Webapp</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <h2>SmartInsole – Webapp (Step 2: BLE)</h2>
-  <p>Connettiti a <b>Right</b> e/o <b>Left</b> via Bluetooth (Chrome).</p>
 
-  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+<body>
+  <h2>SmartInsole – Webapp (BLE + CoP + CSV)</h2>
+
+  <p>
+    Connettiti alle solette <b>Right</b> e/o <b>Left</b> via Bluetooth (Chrome / Android).
+  </p>
+
+  <!-- Connessione -->
+  <div style="display:flex; gap:12px; align-items:center;">
     <button id="btnRight">Connetti Right</button>
     <span id="stRight">Right: non connesso</span>
   </div>
 
-  <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:10px;">
+  <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
     <button id="btnLeft">Connetti Left</button>
     <span id="stLeft">Left: non connesso</span>
   </div>
 
-  <div style="margin-top:15px; display:flex; gap:10px; flex-wrap:wrap;">
+  <!-- Controlli -->
+  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
     <button id="btnStart">Start</button>
     <button id="btnStop" disabled>Stop</button>
     <button id="btnDisconnect">Disconnect</button>
   </div>
 
-  <div style="margin-top:12px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
-    <label style="display:flex; gap:8px; align-items:center;">
-      <input id="chkKg" type="checkbox" />
-      Mostra in kg (default: N)
-    </label>
+  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+    <label><input type="checkbox" id="chkKg"> Mostra kg</label>
     <button id="btnZeroIMU">Zero IMU</button>
-    <button id="btnReset">Reset (clear)</button>
+    <button id="btnReset">Reset</button>
   </div>
 
   <!-- Recorder -->
-  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-    <input id="patientId" type="text" placeholder="ID paziente / sessione (opz.)" style="min-width:260px;" />
-    <button id="btnRecStart">Start Rec</button>
-    <button id="btnRecStop" disabled>Stop Rec</button>
+  <h3>Session Recorder</h3>
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <input id="patientId" placeholder="Patient ID (opz.)" />
+    <button id="btnRecStart">REC Start</button>
+    <button id="btnRecStop" disabled>REC Stop</button>
     <button id="btnRecDownload" disabled>Download CSV</button>
-    <span id="recStatus" style="font-weight:600;"></span>
+    <span id="recStatus"></span>
   </div>
 
-  <div id="jsOk" style="margin-top:10px; font-weight:600;"></div>
-
+  <!-- Output testuale -->
   <h3>Dati</h3>
   <pre id="out">—</pre>
 
+  <!-- CoP -->
+  <h3>Center of Pressure (2D)</h3>
+  <div style="display:flex; gap:16px; flex-wrap:wrap;">
+    <div>
+      <div><b>Right</b></div>
+      <canvas id="cvRight" width="260" height="520"
+        style="border:1px solid #333; border-radius:10px;"></canvas>
+    </div>
+    <div>
+      <div><b>Left</b></div>
+      <canvas id="cvLeft" width="260" height="520"
+        style="border:1px solid #333; border-radius:10px;"></canvas>
+    </div>
+  </div>
+
+  <!-- Log -->
   <h3>Log</h3>
   <pre id="log">—</pre>
 
-  <script src="app.js?v=20"></script>
+  <div id="jsOk" style="margin-top:8px; font-weight:600;"></div>
+
+  <script src="app.js?v=1"></script>
 </body>
 </html>
-
