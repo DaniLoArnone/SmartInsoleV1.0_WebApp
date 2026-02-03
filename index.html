@@ -15,32 +15,33 @@
   </p>
 
   <!-- Connessione -->
-  <div style="display:flex; gap:12px; align-items:center;">
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
     <button id="btnRight">Connetti Right</button>
     <span id="stRight">Right: non connesso</span>
   </div>
 
-  <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+  <div style="display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap;">
     <button id="btnLeft">Connetti Left</button>
     <span id="stLeft">Left: non connesso</span>
   </div>
 
-  <!-- Controlli -->
+  <!-- Controlli acquisizione -->
   <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
     <button id="btnStart">Start</button>
     <button id="btnStop" disabled>Stop</button>
     <button id="btnDisconnect">Disconnect</button>
   </div>
 
-  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+  <!-- Utility -->
+  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
     <label><input type="checkbox" id="chkKg"> Mostra kg</label>
     <button id="btnZeroIMU">Zero IMU</button>
-    <button id="btnReset">Reset</button>
+    <button id="btnReset">Reset valori</button>
   </div>
 
   <!-- Recorder -->
   <h3>Session Recorder</h3>
-  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
     <input id="patientId" placeholder="Patient ID (opz.)" />
     <button id="btnRecStart">REC Start</button>
     <button id="btnRecStop" disabled>REC Stop</button>
@@ -73,6 +74,6 @@
 
   <div id="jsOk" style="margin-top:8px; font-weight:600;"></div>
 
-  <script src="app.js?v=1"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>
