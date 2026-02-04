@@ -1,6 +1,6 @@
 // =====================
 // SmartInsole Webapp
-// BLE + GRF + CoP + CSV + Calibrazione OK
+// BLE + GRF + CoP + CSV + Calibration + Sensor Position
 // =====================
 
 // ---- BLE UUID
@@ -8,7 +8,7 @@ const SERVICE_UUID  = "12345678-1234-1234-1234-1234567890ab";
 const CHAR_UUID_FSR = "abcd1234-5678-90ab-cdef-1234567890ab";
 const CHAR_UUID_IMU = "11223344-5566-7788-99aa-bbccddeeff00";
 
-// ---- Device names
+// ---- Device names to be changed
 const DEVNAME_RIGHT = "ESP32-FSR-IMU";
 const DEVNAME_LEFT  = "ESP32-FSR-IMU";
 
@@ -32,21 +32,20 @@ let recStartMs = null;
 // ---- IMU zero (visual)
 let imuZero = { pitch: 0, roll: 0 };
 
-// ---- Sensor positions (normalized, placeholder)
 const SENSOR_POS = {
   Right: [
-    { x: 0.40, y: 0.88 }, // S2
-    { x: 0.60, y: 0.72 }, // S3
-    { x: 0.55, y: 0.52 }, // S4
-    { x: 0.45, y: 0.34 }, // S5
-    { x: 0.50, y: 0.18 }, // S6
+    { x: 0.3333333333, y: 0.2000000000 }, // S2 BigToe
+    { x: 0.5666666667, y: 0.2833333333 }, // S3 Forefoot
+    { x: 0.5000000000, y: 0.5666666667 }, // S4 Midfoot
+    { x: 0.4000000000, y: 0.7500000000 }, // S5 Hindfoot
+    { x: 0.4666666667, y: 0.8500000000 }, // S6 Heel
   ],
   Left: [
-    { x: 0.60, y: 0.88 }, // mirrored (rough)
-    { x: 0.40, y: 0.72 },
-    { x: 0.45, y: 0.52 },
-    { x: 0.55, y: 0.34 },
-    { x: 0.50, y: 0.18 },
+    { x: 0.6666666667, y: 0.2000000000 }, // S1
+    { x: 0.4333333333, y: 0.2833333333 }, // S7
+    { x: 0.5000000000, y: 0.5666666667 }, // S8
+    { x: 0.6000000000, y: 0.7500000000 }, // S9
+    { x: 0.5333333333, y: 0.8500000000 }, // S10
   ],
 };
 
@@ -109,7 +108,7 @@ function setRecStatus() {
 }
 
 // =====================
-// Calibration REAL
+// Calibration REAL (piecewise average)
 // =====================
 function piecewise(A, B, C, D, v) {
   if (v < 3100) return (A(v) + C(v)) / 2.0;
@@ -168,9 +167,10 @@ function adcToN(_side, idx, adc) {
 // Parsing
 // =====================
 function parseFSR(line) {
-  // ES. "FSR,S2: 123,S3: 456,S4: 0,S5: 0,S6: 12"
+  // "FSR,S2: 123,S3: 456,S4: 0,S5: 0,S6: 12"
   const m = [...line.matchAll(/S([2-6])\s*:\s*(\d+)/g)];
   if (m.length < 5) return null;
+
   const out = [null, null, null, null, null]; // S2..S6
   for (const mm of m) {
     const s = parseInt(mm[1], 10);
@@ -246,7 +246,6 @@ function drawCoP(side) {
   if (ctx.roundRect) {
     ctx.roundRect(W * 0.18, H * 0.05, W * 0.64, H * 0.90, 80);
   } else {
-    // fallback rect
     ctx.rect(W * 0.18, H * 0.05, W * 0.64, H * 0.90);
   }
   ctx.fill();
