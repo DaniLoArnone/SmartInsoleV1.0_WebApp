@@ -246,7 +246,46 @@ function computeCoP(side) {
 }
 
 // =====================
-// Draw CoP canvas & Heatmap
+// Vector foot silhouette (Mirrored)
+// =====================
+function drawFootSilhouette(ctx, W, H, side) {
+  ctx.save();
+  ctx.beginPath();
+  
+  // Mirror horizontally if it's the Left foot
+  if (side === "Left") {
+    ctx.translate(W, 0);
+    ctx.scale(-1, 1);
+  }
+
+  // Coordinates for a Right foot
+  ctx.moveTo(W * 0.45, H * 0.90); // Heel base
+  ctx.bezierCurveTo(W * 0.45, H * 0.98, W * 0.65, H * 0.98, W * 0.65, H * 0.90); // Heel curve
+  ctx.bezierCurveTo(W * 0.70, H * 0.75, W * 0.85, H * 0.55, W * 0.85, H * 0.35); // Outer edge
+  ctx.bezierCurveTo(W * 0.85, H * 0.10, W * 0.65, H * 0.05, W * 0.45, H * 0.05); // Toe area
+  ctx.bezierCurveTo(W * 0.25, H * 0.05, W * 0.15, H * 0.20, W * 0.25, H * 0.35); // Big toe (inner edge)
+  ctx.bezierCurveTo(W * 0.35, H * 0.45, W * 0.45, H * 0.55, W * 0.40, H * 0.70); // Plantar arch
+  ctx.bezierCurveTo(W * 0.38, H * 0.80, W * 0.45, H * 0.90, W * 0.45, H * 0.90); // Return to heel
+
+  ctx.closePath();
+  
+  // Style matching your reference image
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#888888"; // Grey border
+  ctx.fillStyle = "#1a1a1a";   // Dark interior
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// =====================
+// Hidden Canvas for Heatmap (Created only once to save RAM)
+// =====================
+const heatCanvas = document.createElement("canvas");
+const heatCtx = heatCanvas.getContext("2d", { willReadFrequently: true });
+
+// =====================
+// Draw CoP canvas & Heatmap (Final)
 // =====================
 function drawCoP(side) {
   const cv = (side === "Right") ? el.cvRight : el.cvLeft;
@@ -255,51 +294,36 @@ function drawCoP(side) {
   const ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height;
 
-  ctx.clearRect(0, 0, W, H);
-
-  // 1. Background
-  ctx.fillStyle = "#111";
+  // 1. Main background completely black
+  ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = "#1b1b1b";
-  ctx.beginPath();
-  if (ctx.roundRect) {
-    ctx.roundRect(W * 0.18, H * 0.05, W * 0.64, H * 0.90, 80);
-  } else {
-    ctx.rect(W * 0.18, H * 0.05, W * 0.64, H * 0.90);
-  }
-  ctx.fill();
+  // 2. Draw the foot silhouette (already mirrored if necessary)
+  drawFootSilhouette(ctx, W, H, side);
+
+  // 3. Setup the hidden heatmap canvas
+  heatCanvas.width = W; 
+  heatCanvas.height = H;
+  heatCtx.clearRect(0, 0, W, H);
+  heatCtx.globalCompositeOperation = "screen";
 
   const s = state[side];
   const forcesN = s.lastFSR ? s.lastFSR.map((v, i) => adcToN(side, i, v)) : [0,0,0,0,0];
 
-  // ----------------------------------------------------
-  // 2. HEATMAP (Gradient + Interpolation)
-  // ----------------------------------------------------
-  
-  // Creiamo un canvas "nascosto" per calcolare le sfumature++++++++++++++++++++++++
-  const heatCanvas = document.createElement("canvas");
-  heatCanvas.width = W; heatCanvas.height = H;
-  const heatCtx = heatCanvas.getContext("2d");
-  
-  // "lighter" permette di sommare i valori dove due gradienti si sovrappongono++++++++++++++++++++
-  heatCtx.globalCompositeOperation = "lighter";
-
+  // Draw pressure gradients
   for (let i = 0; i < 5; i++) {
     const p = SENSOR_POS[side][i];
     const x = p.x * W;
     const y = p.y * H;
     const f = forcesN[i] || 0;
 
-    // Normalizziamo l'intensità tra 0.0 e 1.0 rispetto alla forza massima attesa+++++++++++++++++++++++
-    const intensity = Math.min(f / MAX_FORCE_N, 1.0);
-    
-    if (intensity > 0.01) { // Disegna solo se c'è un minimo di pressione++++++++++++++++++++++++
-      // Creiamo un alone gaussiano (centro opaco, bordi trasparenti)++++++++++++++++++++++++++++
+    let intensity = f / MAX_FORCE_N;
+    if (intensity > 1.0) intensity = 1.0;
+
+    if (intensity > 0.02) {
       const grad = heatCtx.createRadialGradient(x, y, 0, x, y, HEAT_RADIUS);
-      grad.addColorStop(0, `rgba(0, 0, 0, ${intensity})`); 
+      grad.addColorStop(0, `rgba(0, 0, 0, ${intensity})`);
       grad.addColorStop(1, "rgba(0, 0, 0, 0)");
-      
       heatCtx.fillStyle = grad;
       heatCtx.beginPath();
       heatCtx.arc(x, y, HEAT_RADIUS, 0, Math.PI * 2);
@@ -307,58 +331,69 @@ function drawCoP(side) {
     }
   }
 
-  // Coloriamo l'alone nero/trasparente convertendolo in colori freddo->caldo++++++++++++++++++++
-  const imageData = heatCtx.getImageData(0, 0, W, H);
-  const pixels = imageData.data;
-  
-  for (let i = 0; i < pixels.length; i += 4) {
-    const alpha = pixels[i + 3]; // Leggiamo la "densità" del nero
+  // Apply colors (Uses the colorMapData variable created earlier)
+  const imgData = heatCtx.getImageData(0, 0, W, H);
+  const px = imgData.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const alpha = px[i + 3];
     if (alpha > 0) {
-      const colorIdx = alpha * 4; // Mappiamo l'opacità sulla nostra ColorMap
-      pixels[i]     = colorMapData[colorIdx];     // Rosso
-      pixels[i + 1] = colorMapData[colorIdx + 1]; // Verde
-      pixels[i + 2] = colorMapData[colorIdx + 2]; // Blu
-      pixels[i + 3] = alpha > 200 ? 255 : alpha;  // Opacità finale
+      const cIdx = alpha * 4;
+      px[i]     = colorMapData[cIdx];     // R
+      px[i + 1] = colorMapData[cIdx + 1]; // G
+      px[i + 2] = colorMapData[cIdx + 2]; // B
+      px[i + 3] = alpha > 150 ? 200 : alpha; // Makes the center more solid
     }
   }
-  heatCtx.putImageData(imageData, 0, 0);
+  heatCtx.putImageData(imgData, 0, 0);
 
-  // Disegniamo la mappa calcolata sopra la sagoma del piede
-  ctx.globalAlpha = 0.85; 
+  // 4. Overlay the heatmap on the foot
   ctx.drawImage(heatCanvas, 0, 0);
-  ctx.globalAlpha = 1.0;
 
-  // ----------------------------------------------------
-  // 3. Sensor e CoP
-  // ----------------------------------------------------
+  // 5. Sensor labels and dots ALWAYS ON TOP
+  const labelsRight = ["S2", "S3", "S4", "S5", "S6"];
+  const labelsLeft  = ["S1", "S7", "S8", "S9", "S10"];
+  
   for (let i = 0; i < 5; i++) {
     const p = SENSOR_POS[side][i];
     const x = p.x * W, y = p.y * H;
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.font = "12px system-ui";
-    ctx.fillText(`S${i + 2}`, x - 10, y + 4);
+    const label = (side === "Right") ? labelsRight[i] : labelsLeft[i];
+
+    // Draw the dot
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw the text
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 13px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x, y - 10);
   }
 
+  // 6. CoP Trace
   const cop = computeCoP(side);
   if (cop) {
     copTrace[side].push({ x: cop.x, y: cop.y });
     if (copTrace[side].length > COP_TRACE_MAX) copTrace[side].shift();
 
-    // Trace cop
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (let k = 0; k < copTrace[side].length; k++) {
-      const p = copTrace[side][k];
-      const px = p.x * W, py = p.y * H;
+      const pt = copTrace[side][k];
+      const px = pt.x * W, py = pt.y * H;
       if (k === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
     ctx.stroke();
 
-    // CoP
+    // Bright yellow for the current CoP
     const cx = cop.x * W, cy = cop.y * H;
-    ctx.fillStyle = "#ffeb3b";
+    ctx.fillStyle = "#ffeb3b"; 
     ctx.beginPath();
     ctx.arc(cx, cy, 6, 0, Math.PI * 2);
     ctx.fill();
