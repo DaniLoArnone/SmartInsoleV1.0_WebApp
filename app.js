@@ -41,12 +41,12 @@ const SENSOR_POS = {
     { x: 0.4666666667, y: 0.8500000000 }, // S6 Heel
   ],
   Left: [
-    { x: 0.6666666667, y: 0.2000000000 }, // S1
-    { x: 0.4333333333, y: 0.2833333333 }, // S7
-    { x: 0.5000000000, y: 0.5666666667 }, // S8
-    { x: 0.6000000000, y: 0.7500000000 }, // S9
-    { x: 0.5333333333, y: 0.8500000000 }, // S10
-  ],
+    { x: 0.6666666667, y: 0.2000000000 }, // S1 BigToe
+    { x: 0.4333333333, y: 0.2833333333 }, // S7 Forefoot
+    { x: 0.5000000000, y: 0.5666666667 }, // S8 Midfoot
+    { x: 0.6000000000, y: 0.7500000000 }, // S9 Hindfoot
+    { x: 0.5333333333, y: 0.8500000000 }, // S10 Heel
+  ], 
 };
 
 const copTrace = { Right: [], Left: [] };
@@ -80,6 +80,27 @@ const el = {
   log: document.getElementById("log"),
   jsOk: document.getElementById("jsOk"),
 };
+
+// ---- Heatmap
+const MAX_FORCE_N = 100; // Max Force: Regola questo valore in N. Indica la forza a cui il colore diventa ROSSO intenso.
+const HEAT_RADIUS = 65;  // Quanto "largo" si espande il colore di ogni sensore.
+
+// Colormap
+const colorMapData = (function createColormap() {
+  const cv = document.createElement("canvas");
+  cv.width = 256; cv.height = 1;
+  const ctx = cv.getContext("2d");
+  const grad = ctx.createLinearGradient(0, 0, 256, 0);
+  grad.addColorStop(0.0, "rgba(0,0,255,0)");    // 0: Transparent
+  grad.addColorStop(0.2, "rgba(0,0,255,1)");    // Low: Blue
+  grad.addColorStop(0.4, "rgba(0,255,255,1)");  // Mid-Low: Ciano
+  grad.addColorStop(0.6, "rgba(0,255,0,1)");    // Mid: Green
+  grad.addColorStop(0.8, "rgba(255,255,0,1)");  // Mid-high: Yellow
+  grad.addColorStop(1.0, "rgba(255,0,0,1)");    // High: Red
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 1);
+  return ctx.getImageData(0, 0, 256, 1).data;
+})();
 
 // =====================
 // Logging / UI helpers
@@ -225,7 +246,7 @@ function computeCoP(side) {
 }
 
 // =====================
-// Draw CoP canvas
+// Draw CoP canvas & Heatmap
 // =====================
 function drawCoP(side) {
   const cv = (side === "Right") ? el.cvRight : el.cvLeft;
@@ -236,11 +257,10 @@ function drawCoP(side) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // background
+  // 1. Background
   ctx.fillStyle = "#111";
   ctx.fillRect(0, 0, W, H);
 
-  // pseudo-foot silhouette
   ctx.fillStyle = "#1b1b1b";
   ctx.beginPath();
   if (ctx.roundRect) {
@@ -250,9 +270,20 @@ function drawCoP(side) {
   }
   ctx.fill();
 
-  // sensor bubbles
   const s = state[side];
   const forcesN = s.lastFSR ? s.lastFSR.map((v, i) => adcToN(side, i, v)) : [0,0,0,0,0];
+
+  // ----------------------------------------------------
+  // 2. HEATMAP (Gradient + Interpolation)
+  // ----------------------------------------------------
+  
+  // Creiamo un canvas "nascosto" per calcolare le sfumature++++++++++++++++++++++++
+  const heatCanvas = document.createElement("canvas");
+  heatCanvas.width = W; heatCanvas.height = H;
+  const heatCtx = heatCanvas.getContext("2d");
+  
+  // "lighter" permette di sommare i valori dove due gradienti si sovrappongono++++++++++++++++++++
+  heatCtx.globalCompositeOperation = "lighter";
 
   for (let i = 0; i < 5; i++) {
     const p = SENSOR_POS[side][i];
@@ -260,27 +291,60 @@ function drawCoP(side) {
     const y = p.y * H;
     const f = forcesN[i] || 0;
 
-    // scale radius (only visualization)
-    const r = Math.max(6, Math.min(26, 6 + f * 0.01));
+    // Normalizziamo l'intensità tra 0.0 e 1.0 rispetto alla forza massima attesa+++++++++++++++++++++++
+    const intensity = Math.min(f / MAX_FORCE_N, 1.0);
+    
+    if (intensity > 0.01) { // Disegna solo se c'è un minimo di pressione++++++++++++++++++++++++
+      // Creiamo un alone gaussiano (centro opaco, bordi trasparenti)++++++++++++++++++++++++++++
+      const grad = heatCtx.createRadialGradient(x, y, 0, x, y, HEAT_RADIUS);
+      grad.addColorStop(0, `rgba(0, 0, 0, ${intensity})`); 
+      grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+      
+      heatCtx.fillStyle = grad;
+      heatCtx.beginPath();
+      heatCtx.arc(x, y, HEAT_RADIUS, 0, Math.PI * 2);
+      heatCtx.fill();
+    }
+  }
 
-    ctx.beginPath();
-    ctx.fillStyle = "#2e7dff";
-    ctx.globalAlpha = 0.85;
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+  // Coloriamo l'alone nero/trasparente convertendolo in colori freddo->caldo++++++++++++++++++++
+  const imageData = heatCtx.getImageData(0, 0, W, H);
+  const pixels = imageData.data;
+  
+  for (let i = 0; i < pixels.length; i += 4) {
+    const alpha = pixels[i + 3]; // Leggiamo la "densità" del nero
+    if (alpha > 0) {
+      const colorIdx = alpha * 4; // Mappiamo l'opacità sulla nostra ColorMap
+      pixels[i]     = colorMapData[colorIdx];     // Rosso
+      pixels[i + 1] = colorMapData[colorIdx + 1]; // Verde
+      pixels[i + 2] = colorMapData[colorIdx + 2]; // Blu
+      pixels[i + 3] = alpha > 200 ? 255 : alpha;  // Opacità finale
+    }
+  }
+  heatCtx.putImageData(imageData, 0, 0);
 
-    ctx.fillStyle = "#fff";
+  // Disegniamo la mappa calcolata sopra la sagoma del piede
+  ctx.globalAlpha = 0.85; 
+  ctx.drawImage(heatCanvas, 0, 0);
+  ctx.globalAlpha = 1.0;
+
+  // ----------------------------------------------------
+  // 3. Sensor e CoP
+  // ----------------------------------------------------
+  for (let i = 0; i < 5; i++) {
+    const p = SENSOR_POS[side][i];
+    const x = p.x * W, y = p.y * H;
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
     ctx.font = "12px system-ui";
     ctx.fillText(`S${i + 2}`, x - 10, y + 4);
   }
 
-  // CoP + trace
   const cop = computeCoP(side);
   if (cop) {
     copTrace[side].push({ x: cop.x, y: cop.y });
     if (copTrace[side].length > COP_TRACE_MAX) copTrace[side].shift();
 
+    // Trace cop
     ctx.strokeStyle = "rgba(255,255,255,0.55)";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -292,6 +356,7 @@ function drawCoP(side) {
     }
     ctx.stroke();
 
+    // CoP
     const cx = cop.x * W, cy = cop.y * H;
     ctx.fillStyle = "#ffeb3b";
     ctx.beginPath();
@@ -301,7 +366,6 @@ function drawCoP(side) {
     ctx.stroke();
   }
 }
-
 // =====================
 // Output + CSV recorder
 // =====================
@@ -374,7 +438,7 @@ REC: ${recording ? "ON" : "OFF"} (righe: ${records.length})
 `;
   if (el.out) el.out.textContent = txt;
 
-  drawCoP("Right");
+  CoP("Right");
   drawCoP("Left");
 }
 
@@ -386,6 +450,7 @@ function onChunk(side, chunk) {
 
   const s = state[side];
   s.buf += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (s.buf.length > 2000) s.buf = ""; // Flush the buffer if data is corrupt or missing\n
 
   while (true) {
     const idx = s.buf.indexOf("\n");
