@@ -473,7 +473,7 @@ REC: ${recording ? "ON" : "OFF"} (righe: ${records.length})
 `;
   if (el.out) el.out.textContent = txt;
 
-  CoP("Right");
+  drawCoP("Right");
   drawCoP("Left");
 }
 
