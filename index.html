@@ -6,75 +6,108 @@
   <title>SmartInsole Webapp</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-
 <body>
-  <h2>SmartInsole – Webapp (BLE + CoP + CSV)</h2>
 
-  <p>
-    Connettiti alle solette <b>Right</b> e/o <b>Left</b> via Bluetooth (Chrome / Android).
-  </p>
+<h2>SmartInsole – BLE + Heatmap + 3D</h2>
 
-  <!-- Connessione -->
-  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-    <button id="btnRight">Connetti Right</button>
-    <span id="stRight">Right: non connesso</span>
+<!-- ── Connessione ── -->
+<div class="row-wrap">
+  <button id="btnRight">Connetti Right</button>
+  <span id="stRight" class="status">Right: non connesso</span>
+  <button id="btnLeft" style="margin-left:16px">Connetti Left</button>
+  <span id="stLeft" class="status">Left: non connesso</span>
+</div>
+
+<!-- ── Controlli acquisizione ── -->
+<div class="row-wrap" style="margin-top:10px">
+  <button id="btnStart">Start</button>
+  <button id="btnStop" disabled>Stop</button>
+  <button id="btnDisconnect">Disconnect</button>
+</div>
+
+<!-- ── Utility ── -->
+<div class="row-wrap" style="margin-top:10px">
+  <label><input type="checkbox" id="chkKg"> Mostra kg</label>
+  <button id="btnZeroIMU">Zero IMU</button>
+  <button id="btnReset">Reset</button>
+</div>
+
+<!-- ── Session Recorder ── -->
+<h3>Session Recorder</h3>
+<div class="row-wrap">
+  <input id="patientId" placeholder="Patient ID (opz.)" />
+  <button id="btnRecStart">REC Start</button>
+  <button id="btnRecStop" disabled>REC Stop</button>
+  <button id="btnRecDownload" disabled>Download CSV</button>
+  <span id="recStatus" class="status"></span>
+</div>
+
+<!-- ── Visualizzazione principale ── -->
+<h3>Heatmap pressioni plantari</h3>
+<div class="viz-row">
+
+  <!-- LEFT foot column -->
+  <div class="foot-col">
+    <div class="foot-title">LEFT</div>
+    <canvas id="cvHeatL" width="200" height="498" class="heatmap-cv"></canvas>
   </div>
 
-  <div style="display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-    <button id="btnLeft">Connetti Left</button>
-    <span id="stLeft">Left: non connesso</span>
+  <!-- RIGHT foot column -->
+  <div class="foot-col">
+    <div class="foot-title">RIGHT</div>
+    <canvas id="cvHeatR" width="200" height="498" class="heatmap-cv"></canvas>
   </div>
 
-  <!-- Controlli acquisizione -->
-  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
-    <button id="btnStart">Start</button>
-    <button id="btnStop" disabled>Stop</button>
-    <button id="btnDisconnect">Disconnect</button>
+  <!-- Colorbar -->
+  <div class="cbar-col">
+    <span class="cbar-label" id="cbarMax">— N</span>
+    <canvas id="cbar" width="22" height="440" class="cbar-cv"></canvas>
+    <span class="cbar-label">0 N</span>
   </div>
 
-  <!-- Utility -->
-  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-    <label><input type="checkbox" id="chkKg"> Mostra kg</label>
-    <button id="btnZeroIMU">Zero IMU</button>
-    <button id="btnReset">Reset valori</button>
+</div>
+
+<!-- ── 3D Foot models ── -->
+<h3>Modello 3D – orientamento IMU</h3>
+<div class="viz-row">
+  <div class="foot-col">
+    <div class="foot-title">LEFT 3D</div>
+    <div id="foot3dL" class="foot3d"></div>
   </div>
-
-  <!-- Recorder -->
-  <h3>Session Recorder</h3>
-  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-    <input id="patientId" placeholder="Patient ID (opz.)" />
-    <button id="btnRecStart">REC Start</button>
-    <button id="btnRecStop" disabled>REC Stop</button>
-    <button id="btnRecDownload" disabled>Download CSV</button>
-    <span id="recStatus"></span>
+  <div class="foot-col">
+    <div class="foot-title">RIGHT 3D</div>
+    <div id="foot3dR" class="foot3d"></div>
   </div>
+</div>
 
-  <!-- Output testuale -->
-  <h3>Dati</h3>
-  <pre id="out">—</pre>
+<!-- ── Dati testuali ── -->
+<h3>Dati</h3>
+<pre id="out">—</pre>
 
-  <!-- CoP -->
-  <h3>Center of Pressure (2D)</h3>
-  <div style="display:flex; gap:16px; flex-wrap:wrap;">
-    <div>
-      <div><b>Left</b></div>
-      <canvas id="cvLeft" width="260" height="520"
-        style="border:1px solid #333; border-radius:10px;"></canvas>
-    </div>
-    
-    <div>
-      <div><b>Right</b></div>
-      <canvas id="cvRight" width="260" height="520"
-        style="border:1px solid #333; border-radius:10px;"></canvas>
-    </div>
-  </div>
+<!-- ── Log ── -->
+<h3>Log</h3>
+<pre id="log">—</pre>
 
-  <!-- Log -->
-  <h3>Log</h3>
-  <pre id="log">—</pre>
+<div id="jsOk" style="margin-top:8px;font-weight:600"></div>
 
-  <div id="jsOk" style="margin-top:8px; font-weight:600;"></div>
+<!-- Three.js r128 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="app.js?v=4"></script>
 
-  <script src="app.js?v=3"></script>
+<!-- Colorbar init (after app.js defines heatColor) -->
+<script>
+(function initCbar(){
+  const cv = document.getElementById("cbar");
+  if (!cv || typeof heatColor === "undefined") { setTimeout(initCbar, 300); return; }
+  const ctx = cv.getContext("2d");
+  const h = cv.height;
+  for (let y=0;y<h;y++){
+    const [r,g,b] = heatColor(1-y/h);
+    ctx.fillStyle=`rgb(${r},${g},${b})`;
+    ctx.fillRect(0,y,cv.width,1);
+  }
+})();
+</script>
+
 </body>
 </html>
