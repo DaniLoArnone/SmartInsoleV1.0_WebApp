@@ -219,64 +219,73 @@ function init3D(side) {
   const H = container.clientHeight || 280;
 
   const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
-  renderer.setSize(W,H);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x080818, 1);
   container.innerHTML = "";
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(45, W/H, 0.01, 100);
-  camera.position.set(0, 1.5, 3.5);
-  camera.lookAt(0, 0, 0);
+  scene.background = new THREE.Color(0x080818);
+
+  // Camera: mesh diagonal ~2.5 units, position back enough to see whole foot
+  const camera = new THREE.PerspectiveCamera(40, W/H, 0.1, 50);
+  camera.position.set(0, 0.8, 4.5);
+  camera.lookAt(0, 0.2, 0);
 
   // Lights
-  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-  const dLight = new THREE.DirectionalLight(0xffffff, 0.9);
-  dLight.position.set(1,2,2); scene.add(dLight);
-  const dLight2 = new THREE.DirectionalLight(0x88aaff, 0.4);
-  dLight2.position.set(-1,-1,-1); scene.add(dLight2);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dLight = new THREE.DirectionalLight(0xfff4e8, 1.0);
+  dLight.position.set(2, 3, 3); scene.add(dLight);
+  const dLight2 = new THREE.DirectionalLight(0x8899ff, 0.35);
+  dLight2.position.set(-2, -1, -2); scene.add(dLight2);
 
-  // Build geometry
+  // Build geometry – center it by shifting vertex data directly
+  const vData = FOOT_V.slice();
+
+  // Compute centroid from raw data
+  let cx=0, cy=0, cz=0;
+  const nV = vData.length/3;
+  for (let i=0; i<vData.length; i+=3) { cx+=vData[i]; cy+=vData[i+1]; cz+=vData[i+2]; }
+  cx/=nV; cy/=nV; cz/=nV;
+
+  // Shift vertices so centroid is at origin
+  for (let i=0; i<vData.length; i+=3) { vData[i]-=cx; vData[i+1]-=cy; vData[i+2]-=cz; }
+
+  // Mirror X for left foot
+  if (side==="Left") {
+    for (let i=0; i<vData.length; i+=3) vData[i] = -vData[i];
+  }
+
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(FOOT_V.slice(), 3));
+  geo.setAttribute("position", new THREE.BufferAttribute(vData, 3));
   geo.setIndex(new THREE.BufferAttribute(new Uint16Array(FOOT_F), 1));
   geo.computeVertexNormals();
 
-  // Mirror for left foot (flip X)
-  if (side==="Left") {
-    const pos = geo.attributes.position.array;
-    for (let i=0;i<pos.length;i+=3) pos[i] = -pos[i];
-    geo.computeVertexNormals();
-  }
-
   const mat = new THREE.MeshPhongMaterial({
-    color: 0xd4a88a, specular:0x333333, shininess:30,
-    side: THREE.DoubleSide
+    color: 0xc8956a,
+    specular: 0x442211,
+    shininess: 40,
+    side: THREE.DoubleSide,
   });
+
   const mesh = new THREE.Mesh(geo, mat);
-  // Center the mesh
-  geo.computeBoundingBox();
-  const center = new THREE.Vector3();
-  geo.boundingBox.getCenter(center);
-  mesh.position.sub(center);
-  scene.add(mesh);
 
-  // Axes helper (small)
-  // scene.add(new THREE.AxesHelper(0.5));
-
-  // Pivot for IMU rotation
+  // Pivot at origin (mesh already centered) for IMU rotation
   const pivot = new THREE.Group();
   pivot.add(mesh);
   scene.add(pivot);
 
   // Animation loop
+  let rafId;
   function animate() {
-    requestAnimationFrame(animate);
+    rafId = requestAnimationFrame(animate);
     renderer.render(scene, camera);
   }
   animate();
 
-  foot3D[side] = { pivot, renderer, scene, camera };
+  foot3D[side] = { pivot, renderer, scene, camera, rafId };
+  log(`3D ${side}: inizializzato ✅`);
 }
 
 function updateFoot3D(side) {
