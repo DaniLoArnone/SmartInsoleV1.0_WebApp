@@ -1,20 +1,130 @@
+/* ── SmartInsole Webapp – style.css ── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
 body {
   font-family: system-ui, sans-serif;
   margin: 16px;
+  background: #0e0e14;
+  color: #e8e8f0;
 }
 
+h2, h3 { color: #c8d0f0; margin: 18px 0 8px; }
+h2 { font-size: 1.2rem; }
+h3 { font-size: 1rem; border-bottom: 1px solid #2a2a40; padding-bottom: 4px; }
+
+/* ── Buttons ── */
 button {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #ccc;
-  background: #fff;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid #3a3a5a;
+  background: #1a1a2e;
+  color: #c8d0f0;
   cursor: pointer;
+  font-size: 13px;
+  transition: background .15s, border-color .15s;
+}
+button:hover  { background: #252545; border-color: #5555aa; }
+button:active { background: #1a1a38; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Inputs ── */
+input[type=text], input[placeholder] {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #3a3a5a;
+  background: #15152a;
+  color: #e8e8f0;
+  font-size: 13px;
+  width: 160px;
 }
 
+/* ── Layout helpers ── */
+.row-wrap {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.status {
+  font-size: 12px;
+  color: #8888bb;
+}
+
+/* ── Main visualization row ── */
+.viz-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+/* ── Foot column ── */
+.foot-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.foot-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  color: #8888cc;
+  text-transform: uppercase;
+}
+
+/* ── Heatmap canvas ── */
+.heatmap-cv {
+  border-radius: 10px;
+  background: #050510;
+  display: block;
+}
+
+/* ── 3D container ── */
+.foot3d {
+  width: 220px;
+  height: 280px;
+  border-radius: 10px;
+  background: #080818;
+  overflow: hidden;
+  border: 1px solid #2a2a42;
+}
+
+/* ── Colorbar ── */
+.cbar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 22px;
+}
+.cbar-cv {
+  border-radius: 4px;
+  display: block;
+}
+.cbar-label {
+  font-size: 10px;
+  color: #7777aa;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Pre / log ── */
 pre {
-  background: #111;
-  color: #0f0;
+  background: #0a0a14;
+  color: #44ff88;
   padding: 12px;
   border-radius: 10px;
   white-space: pre-wrap;
+  font-size: 12px;
+  border: 1px solid #1a1a30;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* ── Responsive ── */
+@media (max-width: 540px) {
+  .foot3d { width: 160px; height: 200px; }
+  .heatmap-cv { width: 150px; height: 374px; }
 }
