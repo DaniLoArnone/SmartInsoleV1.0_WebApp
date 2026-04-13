@@ -246,46 +246,57 @@ function computeCoP(side) {
 }
 
 // =====================
-// Vector foot silhouette (Mirrored)
+// "Jet" Colormap Generator (Matplotlib Style)
 // =====================
-function drawFootSilhouette(ctx, W, H, side) {
-  ctx.save();
-  ctx.beginPath();
-  
-  // Mirror horizontally if it's the Left foot
-  if (side === "Left") {
-    ctx.translate(W, 0);
-    ctx.scale(-1, 1);
-  }
-
-  // Coordinates for a Right foot
-  ctx.moveTo(W * 0.45, H * 0.90); // Heel base
-  ctx.bezierCurveTo(W * 0.45, H * 0.98, W * 0.65, H * 0.98, W * 0.65, H * 0.90); // Heel curve
-  ctx.bezierCurveTo(W * 0.70, H * 0.75, W * 0.85, H * 0.55, W * 0.85, H * 0.35); // Outer edge
-  ctx.bezierCurveTo(W * 0.85, H * 0.10, W * 0.65, H * 0.05, W * 0.45, H * 0.05); // Toe area
-  ctx.bezierCurveTo(W * 0.25, H * 0.05, W * 0.15, H * 0.20, W * 0.25, H * 0.35); // Big toe (inner edge)
-  ctx.bezierCurveTo(W * 0.35, H * 0.45, W * 0.45, H * 0.55, W * 0.40, H * 0.70); // Plantar arch
-  ctx.bezierCurveTo(W * 0.38, H * 0.80, W * 0.45, H * 0.90, W * 0.45, H * 0.90); // Return to heel
-
-  ctx.closePath();
-  
-  // Style matching your reference image
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#888888"; // Grey border
-  ctx.fillStyle = "#1a1a1a";   // Dark interior
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
+const colorMapData = new Uint8Array(256 * 4);
+for (let i = 0; i < 256; i++) {
+    let v = i / 255.0;
+    // Math logic for Jet scale (Blue -> Cyan -> Green -> Yellow -> Red)
+    let r = Math.max(0, Math.min(1, 1.5 - Math.abs(4 * v - 3)));
+    let g = Math.max(0, Math.min(1, 1.5 - Math.abs(4 * v - 2)));
+    let b = Math.max(0, Math.min(1, 1.5 - Math.abs(4 * v - 1)));
+    
+    colorMapData[i * 4]     = Math.floor(r * 255); // Red
+    colorMapData[i * 4 + 1] = Math.floor(g * 255); // Green
+    colorMapData[i * 4 + 2] = Math.floor(b * 255); // Blue
+    colorMapData[i * 4 + 3] = 255;                 // Solid alpha (always visible)
 }
 
 // =====================
-// Hidden Canvas for Heatmap (Created only once to save RAM)
+// Vector footprint silhouette (Path2D)
 // =====================
-const heatCanvas = document.createElement("canvas");
-const heatCtx = heatCanvas.getContext("2d", { willReadFrequently: true });
+function getFootPath(W, H, side) {
+  const p = new Path2D();
+  // Mirror the X coordinate if it's the Left foot
+  const flip = (side === "Left");
+  const getX = (val) => flip ? W - (val * W) : val * W;
+  const getY = (val) => val * H;
+
+  p.moveTo(getX(0.45), getY(0.90));
+  p.bezierCurveTo(getX(0.45), getY(0.98), getX(0.65), getY(0.98), getX(0.65), getY(0.90));
+  p.bezierCurveTo(getX(0.70), getY(0.75), getX(0.85), getY(0.55), getX(0.85), getY(0.35));
+  p.bezierCurveTo(getX(0.85), getY(0.10), getX(0.65), getY(0.05), getX(0.45), getY(0.05));
+  p.bezierCurveTo(getX(0.25), getY(0.05), getX(0.15), getY(0.20), getX(0.25), getY(0.35));
+  p.bezierCurveTo(getX(0.35), getY(0.45), getX(0.45), getY(0.55), getX(0.40), getY(0.70));
+  p.bezierCurveTo(getX(0.38), getY(0.80), getX(0.45), getY(0.90), getX(0.45), getY(0.90));
+  p.closePath();
+  return p;
+}
 
 // =====================
-// Draw CoP canvas & Heatmap (Final)
+// Hidden Canvas for Heatmap Interpolation
+// Using a 40x80 CPU-calculated grid, smoothly scaled up by the GPU
+// =====================
+const GRID_W = 40;
+const GRID_H = 80;
+const heatCanvas = document.createElement("canvas");
+heatCanvas.width = GRID_W;
+heatCanvas.height = GRID_H;
+const heatCtx = heatCanvas.getContext("2d", { willReadFrequently: true });
+const heatImgData = heatCtx.createImageData(GRID_W, GRID_H);
+
+// =====================
+// CoP & Heatmap Rendering Engine (IDW Matplotlib Style)
 // =====================
 function drawCoP(side) {
   const cv = (side === "Right") ? el.cvRight : el.cvLeft;
@@ -298,106 +309,115 @@ function drawCoP(side) {
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, W, H);
 
-  // 2. Draw the foot silhouette (already mirrored if necessary)
-  drawFootSilhouette(ctx, W, H, side);
-
-  // 3. Setup the hidden heatmap canvas
-  heatCanvas.width = W; 
-  heatCanvas.height = H;
-  heatCtx.clearRect(0, 0, W, H);
-  heatCtx.globalCompositeOperation = "screen";
-
   const s = state[side];
   const forcesN = s.lastFSR ? s.lastFSR.map((v, i) => adcToN(side, i, v)) : [0,0,0,0,0];
 
-  // Draw pressure gradients
-  for (let i = 0; i < 5; i++) {
-    const p = SENSOR_POS[side][i];
-    const x = p.x * W;
-    const y = p.y * H;
-    const f = forcesN[i] || 0;
+  // 2. IDW (Inverse Distance Weighting) algorithm over the grid
+  const pos = SENSOR_POS[side];
+  const sensors = pos.map((p, i) => ({
+    gx: p.x * GRID_W,
+    gy: p.y * GRID_H,
+    f: forcesN[i] || 0
+  }));
 
-    let intensity = f / MAX_FORCE_N;
-    if (intensity > 1.0) intensity = 1.0;
+  const data = heatImgData.data;
+  let idx = 0;
+  for (let y = 0; y < GRID_H; y++) {
+    for (let x = 0; x < GRID_W; x++) {
+      let v_sum = 0;
+      let w_sum = 0;
+      
+      // Calculate the influence of each sensor on this specific pixel
+      for (let i = 0; i < 5; i++) {
+        const dx = x - sensors[i].gx;
+        const dy = y - sensors[i].gy;
+        // "+ 5.0" spreads the color smoothly, avoiding sharp peaks
+        const w = 1.0 / (dx * dx + dy * dy + 5.0); 
+        v_sum += sensors[i].f * w;
+        w_sum += w;
+      }
+      const v = v_sum / w_sum;
 
-    if (intensity > 0.02) {
-      const grad = heatCtx.createRadialGradient(x, y, 0, x, y, HEAT_RADIUS);
-      grad.addColorStop(0, `rgba(0, 0, 0, ${intensity})`);
-      grad.addColorStop(1, "rgba(0, 0, 0, 0)");
-      heatCtx.fillStyle = grad;
-      heatCtx.beginPath();
-      heatCtx.arc(x, y, HEAT_RADIUS, 0, Math.PI * 2);
-      heatCtx.fill();
+      // Color mapping
+      const limitForce = (typeof MAX_FORCE_N !== 'undefined') ? MAX_FORCE_N : 100.0;
+      let intensity = v / limitForce;
+      if (intensity > 1) intensity = 1;
+      if (intensity < 0) intensity = 0;
+
+      // cIdx fetches the exact color from the generated Jet Colormap
+      const cIdx = Math.floor(intensity * 255) * 4;
+      data[idx++] = colorMapData[cIdx];     // Red
+      data[idx++] = colorMapData[cIdx + 1]; // Green
+      data[idx++] = colorMapData[cIdx + 2]; // Blue
+      data[idx++] = 255;                    // Alpha (Solid)
     }
   }
+  heatCtx.putImageData(heatImgData, 0, 0);
 
-  // Apply colors (Uses the colorMapData variable created earlier)
-  const imgData = heatCtx.getImageData(0, 0, W, H);
-  const px = imgData.data;
-  for (let i = 0; i < px.length; i += 4) {
-    const alpha = px[i + 3];
-    if (alpha > 0) {
-      const cIdx = alpha * 4;
-      px[i]     = colorMapData[cIdx];     // R
-      px[i + 1] = colorMapData[cIdx + 1]; // G
-      px[i + 2] = colorMapData[cIdx + 2]; // B
-      px[i + 3] = alpha > 150 ? 200 : alpha; // Makes the center more solid
-    }
-  }
-  heatCtx.putImageData(imgData, 0, 0);
+  // 3. Clipping mask (colors will ONLY show inside the footprint)
+  ctx.save();
+  const footPath = getFootPath(W, H, side);
+  ctx.clip(footPath);
 
-  // 4. Overlay the heatmap on the foot
-  ctx.drawImage(heatCanvas, 0, 0);
+  // 4. Draw the heatmap by stretching it over the whole canvas
+  // (the browser applies free bilinear interpolation)
+  ctx.drawImage(heatCanvas, 0, 0, W, H);
+  ctx.restore(); // End of clip mask
 
-  // 5. Sensor labels and dots ALWAYS ON TOP
+  // 5. Draw the gray outline around the foot
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#555555";
+  ctx.stroke(footPath);
+
+  // 6. Sensor labels and dots
   const labelsRight = ["S2", "S3", "S4", "S5", "S6"];
   const labelsLeft  = ["S1", "S7", "S8", "S9", "S10"];
   
   for (let i = 0; i < 5; i++) {
     const p = SENSOR_POS[side][i];
-    const x = p.x * W, y = p.y * H;
+    const px = p.x * W, py = p.y * H;
     const label = (side === "Right") ? labelsRight[i] : labelsLeft[i];
 
-    // Draw the dot
     ctx.beginPath();
-    ctx.arc(x, y, 4, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#1a1a1a";
     ctx.fill();
-    ctx.strokeStyle = "#000000";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Draw the text
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 13px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText(label, x, y - 10);
+    ctx.fillText(label, px, py - 10);
   }
 
-  // 6. CoP Trace
+  // 7. Center of Pressure (CoP) trace and current point
   const cop = computeCoP(side);
   if (cop) {
     copTrace[side].push({ x: cop.x, y: cop.y });
     if (copTrace[side].length > COP_TRACE_MAX) copTrace[side].shift();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    // Trace line
+    ctx.strokeStyle = "rgba(255,255,255,0.7)";
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (let k = 0; k < copTrace[side].length; k++) {
       const pt = copTrace[side][k];
-      const px = pt.x * W, py = pt.y * H;
-      if (k === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      const pX = pt.x * W, pY = pt.y * H;
+      if (k === 0) ctx.moveTo(pX, pY);
+      else ctx.lineTo(pX, pY);
     }
     ctx.stroke();
 
-    // Bright yellow for the current CoP
+    // Current yellow dot
     const cx = cop.x * W, cy = cop.y * H;
     ctx.fillStyle = "#ffeb3b"; 
     ctx.beginPath();
     ctx.arc(cx, cy, 6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#000";
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 2;
     ctx.stroke();
   }
 }
