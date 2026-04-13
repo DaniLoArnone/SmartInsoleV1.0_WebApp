@@ -34,21 +34,24 @@ const COP_TRACE_MAX = 80;
 // ── Heatmap canvas dimensions (match foot_mask_image proportions)
 const HM_W = 200, HM_H = 498;
 
-// ── Sensor positions in pixels on heatmap canvas (Right foot, 200×498)
+// ── Sensor positions in pixels on heatmap canvas (200×498)
+// Derived from original normalised positions used in Python app and original JS:
+//   Right: S2(0.333,0.200) S3(0.567,0.283) S4(0.500,0.567) S5(0.400,0.750) S6(0.467,0.850)
+//   Left:  S2(0.667,0.200) S3(0.433,0.283) S4(0.500,0.567) S5(0.600,0.750) S6(0.533,0.850)
 const SENSOR_POS = {
   Right: [
-    { x: 55,  y: 62,  label:"S2" }, // BigToe
-    { x: 125, y: 115, label:"S3" }, // Forefoot (slightly lower & more central)
-    { x: 95,  y: 240, label:"S4" }, // Midfoot
-    { x: 78,  y: 348, label:"S5" }, // Hindfoot
-    { x: 90,  y: 445, label:"S6" }, // Heel
+    { x:  67, y: 100, label:"S2" }, // BigToe    (0.333, 0.200)
+    { x: 113, y: 141, label:"S3" }, // Forefoot  (0.567, 0.283)
+    { x: 100, y: 282, label:"S4" }, // Midfoot   (0.500, 0.567)
+    { x:  80, y: 374, label:"S5" }, // Hindfoot  (0.400, 0.750)
+    { x:  93, y: 423, label:"S6" }, // Heel      (0.467, 0.850)
   ],
   Left: [
-    { x: HM_W-55,  y: 62,  label:"S2" },
-    { x: HM_W-125, y: 115, label:"S3" },
-    { x: HM_W-95,  y: 240, label:"S4" },
-    { x: HM_W-78,  y: 348, label:"S5" },
-    { x: HM_W-90,  y: 445, label:"S6" },
+    { x: 133, y: 100, label:"S2" }, // BigToe    (0.667, 0.200)
+    { x:  87, y: 141, label:"S3" }, // Forefoot  (0.433, 0.283)
+    { x: 100, y: 282, label:"S4" }, // Midfoot   (0.500, 0.567)
+    { x: 120, y: 374, label:"S5" }, // Hindfoot  (0.600, 0.750)
+    { x: 107, y: 423, label:"S6" }, // Heel      (0.533, 0.850)
   ],
 };
 
