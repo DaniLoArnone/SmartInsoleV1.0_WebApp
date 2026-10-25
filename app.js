@@ -6,6 +6,8 @@
 const SERVICE_UUID  = "12345678-1234-1234-1234-1234567890ab";
 const CHAR_UUID_FSR = "abcd1234-5678-90ab-cdef-1234567890ab";
 const CHAR_UUID_IMU = "11223344-5566-7788-99aa-bbccddeeff00";
+const CHAR_UUID_CONTROL = "dcba4321-8765-ba09-fedc-0987654321ba"; // [v2] firmware commands
+const APP_VERSION = "v2.3 (2026-10)";
 
 const DEVNAME_RIGHT = "ESP32-FSR-IMU";
 const DEVNAME_LEFT  = "ESP32-FSR-IMU";
@@ -14,8 +16,12 @@ const G0 = 9.80665;
 
 // ── State
 const state = {
-  Right: { device:null, buf:"", lastFSR:null, lastIMU:null, lastRx:null, grfN:0 },
-  Left:  { device:null, buf:"", lastFSR:null, lastIMU:null, lastRx:null, grfN:0 },
+  Right: { device:null, ctrl:null, buf:"", lastFSR:null, lastFsrT:null, lastFsrN:null, lastIMU:null, lastRx:null, grfN:0,
+           nFsr:0, nImu:0, lost:0, rateFsr:0, rateImu:0,
+           lastFsrPerf:null, rssi:null, batPct:null, batMv:null, lastSta:null, lostWin:0, lostPrev:0 },
+  Left:  { device:null, ctrl:null, buf:"", lastFSR:null, lastFsrT:null, lastFsrN:null, lastIMU:null, lastRx:null, grfN:0,
+           nFsr:0, nImu:0, lost:0, rateFsr:0, rateImu:0,
+           lastFsrPerf:null, rssi:null, batPct:null, batMv:null, lastSta:null, lostWin:0, lostPrev:0 },
 };
 
 let acquisitionRunning = false;
@@ -35,25 +41,25 @@ const COP_TRACE_MAX = 80;
 const HM_W = 200, HM_H = 498;
 
 // ── Sensor positions in pixels on heatmap canvas (200×498)
-// foot_mask / Rfoot_background.png: HEEL IN ALTO (y piccolo), DITA IN BASSO (y grande)
-// Coordinate normalizzate originali: y=0.200=BigToe, y=0.850=Heel (sistema invertito)
-// Mappatura: px = nx*W,  py = (1 - ny) * H
+// foot_mask / Rfoot_background.png: toes at the top (small y), heel at the bottom (large y)
+// Normalised coordinates: y=0.200 = big toe ... y=0.850 = heel  ->  px = nx*W,  py = ny*H
 //   Right: S2(0.333,0.200) S3(0.567,0.283) S4(0.500,0.567) S5(0.400,0.750) S6(0.467,0.850)
 //   Left:  S2(0.667,0.200) S3(0.433,0.283) S4(0.500,0.567) S5(0.600,0.750) S6(0.533,0.850)
+// (Earlier versions used py=(1-ny)*H, which put the heel sensor S6 on the toes.)
 const SENSOR_POS = {
   Right: [
-    { x:  67, y: 398, label:"S2" }, // BigToe    (0.333, 0.200)
-    { x: 113, y: 357, label:"S3" }, // Forefoot  (0.567, 0.283)
-    { x: 100, y: 216, label:"S4" }, // Midfoot   (0.500, 0.567)
-    { x:  80, y: 124, label:"S5" }, // Hindfoot  (0.400, 0.750)
-    { x:  93, y:  75, label:"S6" }, // Heel      (0.467, 0.850)
+    { x:  67, y: 100, label:"S2" }, // BigToe    (0.333, 0.200)
+    { x: 113, y: 141, label:"S3" }, // Forefoot  (0.567, 0.283)
+    { x: 100, y: 282, label:"S4" }, // Midfoot   (0.500, 0.567)
+    { x:  80, y: 374, label:"S5" }, // Hindfoot  (0.400, 0.750)
+    { x:  93, y: 423, label:"S6" }, // Heel      (0.467, 0.850)
   ],
   Left: [
-    { x: 133, y: 398, label:"S2" }, // BigToe    (0.667, 0.200)
-    { x:  87, y: 357, label:"S3" }, // Forefoot  (0.433, 0.283)
-    { x: 100, y: 216, label:"S4" }, // Midfoot   (0.500, 0.567)
-    { x: 120, y: 124, label:"S5" }, // Hindfoot  (0.600, 0.750)
-    { x: 107, y:  75, label:"S6" }, // Heel      (0.533, 0.850)
+    { x: 133, y: 100, label:"S2" }, // BigToe    (0.667, 0.200)
+    { x:  87, y: 141, label:"S3" }, // Forefoot  (0.433, 0.283)
+    { x: 100, y: 282, label:"S4" }, // Midfoot   (0.500, 0.567)
+    { x: 120, y: 374, label:"S5" }, // Hindfoot  (0.600, 0.750)
+    { x: 107, y: 423, label:"S6" }, // Heel      (0.533, 0.850)
   ],
 };
 
@@ -74,54 +80,53 @@ function buildMask(rows, W, H, mirror) {
 const maskR = buildMask(MASK_ROWS, HM_W, HM_H, false);
 const maskL = buildMask(MASK_ROWS, HM_W, HM_H, true);
 
-// ── Heatmap colormap (baropodometric: blue→cyan→green→yellow→orange→red)
+// ── Heatmap: continuous colour scale 0-400 N (fixed, absolute, shared by both feet)
+// [v2.3] Gradient instead of bands. Colour stops in newton; the colour is
+// interpolated linearly between stops. Below HEAT_MIN_N nothing is drawn, as
+// in baropodometric reports; above HEAT_MAX_N (sensor full scale) the colour
+// stays at the last stop.
+const HEAT_MIN_N = 5, HEAT_MAX_N = 400;
+const HEAT_STOPS = [
+  { v:   5, rgb:[225,225,225] },  // grey-white
+  { v:  20, rgb:[ 30, 60,255] },  // blue
+  { v:  50, rgb:[  0,200,255] },  // cyan
+  { v: 100, rgb:[  0,210, 70] },  // green
+  { v: 160, rgb:[255,235,  0] },  // yellow
+  { v: 230, rgb:[255,140,  0] },  // orange
+  { v: 310, rgb:[230,  0, 20] },  // red
+  { v: 400, rgb:[255, 40,220] },  // magenta
+];
+const HEAT_SIGMA_PX = 24;        // spread of each sensing site (~ FSR footprint)
+
+// Colour for a force value in N (null = below threshold, not drawn)
+function bandColor(v) {
+  if (!(v >= HEAT_MIN_N)) return null;
+  if (v >= HEAT_STOPS[HEAT_STOPS.length-1].v) return HEAT_STOPS[HEAT_STOPS.length-1].rgb;
+  let k = 0;
+  while (k + 1 < HEAT_STOPS.length && v >= HEAT_STOPS[k+1].v) k++;
+  const a = HEAT_STOPS[k], b = HEAT_STOPS[k+1];
+  const t = (v - a.v) / (b.v - a.v);
+  return a.rgb.map((x, j) => Math.round(x + t * (b.rgb[j] - x)));
+}
+// Kept for compatibility (t in 0..1 over 0..HEAT_MAX_N)
 function heatColor(t) {
-  t = Math.max(0, Math.min(1, t));
-  const stops = [
-    [0.00,[8,8,130]],[0.07,[0,20,220]],[0.18,[0,80,255]],
-    [0.31,[0,195,240]],[0.44,[0,245,100]],[0.57,[150,255,0]],
-    [0.69,[255,235,0]],[0.81,[255,80,0]],[0.91,[235,5,0]],[1.00,[185,0,55]]
-  ];
-  for (let i=1;i<stops.length;i++) {
-    if (t<=stops[i][0]) {
-      const f=(t-stops[i-1][0])/(stops[i][0]-stops[i-1][0]);
-      return stops[i-1][1].map((v,k)=>Math.round(v+f*(stops[i][1][k]-v)));
-    }
-  }
-  return [185,0,55];
+  return bandColor(Math.max(0, Math.min(1, t)) * HEAT_MAX_N) || [20, 20, 40];
 }
 
-// ── Pressure field interpolation (Gaussian + IDW blend)
+// ── Force field: sum of Gaussian footprints centred on the five sensing sites
 function computePressureField(forces, spos, mask, W, H) {
-  const sigma = 72, idwPow = 3.0, blendG = 0.55;
-  const s2 = 2*sigma*sigma, n = spos.length;
-  const sx = spos.map(p=>p.x), sy = spos.map(p=>p.y);
-  const field = new Float32Array(W*H);
-
-  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
-    if (!mask[y*W+x]) continue;
-    let gN=0,gD=0,iN=0,iD=0;
-    for (let i=0;i<n;i++) {
-      const dx=x-sx[i], dy=y-sy[i], d2=dx*dx+dy*dy;
-      const wg=Math.exp(-d2/s2); gN+=wg*forces[i]; gD+=wg;
-      const wi=1/Math.pow(Math.sqrt(d2)+0.4,idwPow); iN+=wi*forces[i]; iD+=wi;
-    }
-    field[y*W+x] = blendG*(gD>1e-9?gN/gD:0) + (1-blendG)*(iD>1e-9?iN/iD:0);
-  }
-  // Pin sensor peaks locally
-  const PR=15;
-  for (let i=0;i<n;i++) {
-    const px=Math.round(sx[i]), py=Math.round(sy[i]);
-    for (let dy=-PR;dy<=PR;dy++) for (let dx=-PR;dx<=PR;dx++) {
-      const r2=dx*dx+dy*dy; if(r2>PR*PR) continue;
-      const xi=px+dx, yi=py+dy;
-      if (xi<0||xi>=W||yi<0||yi>=H) continue;
-      const idx=yi*W+xi;
-      if (!mask[idx]) continue;
-      const w=Math.max(0,1-Math.sqrt(r2)/PR);
-      field[idx]=Math.max(field[idx], forces[i]*w*w);
-      if (r2<=9) field[idx]=Math.max(field[idx],forces[i]);
-    }
+  const s2 = 2 * HEAT_SIGMA_PX * HEAT_SIGMA_PX, n = spos.length;
+  const field = new Float32Array(W * H);
+  const R = Math.ceil(HEAT_SIGMA_PX * 3.5);
+  for (let i = 0; i < n; i++) {
+    const F = forces[i]; if (!(F > 0)) continue;
+    const cx = spos[i].x, cy = spos[i].y;
+    for (let y = Math.max(0, Math.floor(cy - R)); y <= Math.min(H - 1, Math.ceil(cy + R)); y++)
+      for (let x = Math.max(0, Math.floor(cx - R)); x <= Math.min(W - 1, Math.ceil(cx + R)); x++) {
+        const idx = y * W + x; if (!mask[idx]) continue;
+        const dx = x - cx, dy = y - cy;
+        field[idx] += F * Math.exp(-(dx*dx + dy*dy) / s2);
+      }
   }
   return field;
 }
@@ -136,70 +141,77 @@ function drawHeatmap(side) {
   const s = state[side];
 
   ctx.clearRect(0,0,HM_W,HM_H);
-  ctx.fillStyle = "#050510";
+  ctx.fillStyle = "#000000";
   ctx.fillRect(0,0,HM_W,HM_H);
-
-  // Silhouette base
-  const base = ctx.createImageData(HM_W,HM_H);
-  for (let i=0;i<HM_W*HM_H;i++) {
-    if (mask[i]) { base.data[i*4]=22; base.data[i*4+1]=22; base.data[i*4+2]=42; base.data[i*4+3]=230; }
-  }
-  ctx.putImageData(base,0,0);
-
-  if (!s.lastFSR) return;
-
-  const forces = s.lastFSR.map((v,i) => adcToN(side,i,v));
-  const field = computePressureField(forces, sp, mask, HM_W, HM_H);
-  let fmax=1;
-  for (let i=0;i<field.length;i++) if(mask[i]) fmax=Math.max(fmax,field[i]);
 
   const img = ctx.createImageData(HM_W,HM_H);
   const d = img.data;
-  for (let y=0;y<HM_H;y++) for (let x=0;x<HM_W;x++) {
-    const i=y*HM_W+x, p=i*4;
-    if (!mask[i]) { d[p+3]=0; continue; }
-    const raw = field[i]/fmax;
-    if (raw<0.012) { d[p]=16;d[p+1]=16;d[p+2]=50;d[p+3]=200; continue; }
-    const [r,g,b] = heatColor(Math.pow(raw,0.7));
-    d[p]=r; d[p+1]=g; d[p+2]=b; d[p+3]=230;
-  }
-  ctx.putImageData(img,0,0);
-
-  // CoP
-  let cx=0,cy=0,sf=0;
-  for (let i=0;i<forces.length;i++) { cx+=sp[i].x*forces[i]; cy+=sp[i].y*forces[i]; sf+=forces[i]; }
-  if (sf>0) {
-    cx/=sf; cy/=sf;
-    copTrace[side].push({x:cx,y:cy});
-    if (copTrace[side].length>COP_TRACE_MAX) copTrace[side].shift();
-
-    if (copTrace[side].length>1) {
-      ctx.strokeStyle="rgba(255,229,0,0.5)"; ctx.lineWidth=1.5;
-      ctx.beginPath();
-      copTrace[side].forEach((p,k)=>{ k===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y); });
-      ctx.stroke();
+  // foot outline (thin grey border) so the shape is visible with no load
+  for (let y=1;y<HM_H-1;y++) for (let x=1;x<HM_W-1;x++) {
+    const i=y*HM_W+x;
+    if (mask[i] && (!mask[i-1]||!mask[i+1]||!mask[i-HM_W]||!mask[i+HM_W])) {
+      const p=i*4; d[p]=90; d[p+1]=90; d[p+2]=110; d[p+3]=255;
     }
-    ctx.save();
-    ctx.strokeStyle="#ffe500"; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(cx-9,cy); ctx.lineTo(cx+9,cy); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx,cy-9); ctx.lineTo(cx,cy+9); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx,cy,5,0,Math.PI*2);
-    ctx.fillStyle="#ffe500"; ctx.fill();
-    ctx.strokeStyle="#000"; ctx.lineWidth=1; ctx.stroke();
-    ctx.restore();
+  }
+  if (s.lastFSR) {
+    const forces = s.lastFSR.map((v,i) => adcToN(side,i,v));
+    const field = computePressureField(forces, sp, mask, HM_W, HM_H);
+    for (let i=0;i<field.length;i++) {
+      if (!mask[i]) continue;
+      const c = bandColor(field[i]); if (!c) continue;
+      const p=i*4; d[p]=c[0]; d[p+1]=c[1]; d[p+2]=c[2]; d[p+3]=255;
+    }
+    ctx.putImageData(img,0,0);
+
+    // CoP and trace (grey line, as in baropodometric reports)
+    let cx=0,cy=0,sf=0;
+    for (let i=0;i<forces.length;i++) { cx+=sp[i].x*forces[i]; cy+=sp[i].y*forces[i]; sf+=forces[i]; }
+    if (sf>0) {
+      cx/=sf; cy/=sf;
+      copTrace[side].push({x:cx,y:cy});
+      if (copTrace[side].length>COP_TRACE_MAX) copTrace[side].shift();
+      if (copTrace[side].length>1) {
+        ctx.strokeStyle="rgba(200,200,210,0.9)"; ctx.lineWidth=2;
+        ctx.beginPath();
+        copTrace[side].forEach((p,k)=>{ k===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y); });
+        ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2);
+      ctx.fillStyle="#ffffff"; ctx.fill();
+      ctx.strokeStyle="#000"; ctx.lineWidth=1; ctx.stroke();
+    }
+  } else {
+    ctx.putImageData(img,0,0);
   }
 
-  // Sensor rings + labels
+  // Sensor sites: small labels, unobtrusive
+  ctx.font="bold 8px monospace"; ctx.textAlign="center"; ctx.textBaseline="middle";
   for (let i=0;i<sp.length;i++) {
-    const px=sp[i].x, py=sp[i].y;
-    const t=Math.pow(forces[i]/fmax,0.7);
-    const [r,g,b]=forces[i]>0?heatColor(t):[55,55,90];
-    ctx.beginPath(); ctx.arc(px,py,9,0,Math.PI*2);
-    ctx.strokeStyle=`rgb(${r},${g},${b})`; ctx.lineWidth=2; ctx.stroke();
-    ctx.fillStyle="rgba(0,0,0,.6)"; ctx.fill();
-    ctx.fillStyle="#fff"; ctx.font="bold 8px monospace";
-    ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(sp[i].label,px,py);
+    ctx.beginPath(); ctx.arc(sp[i].x,sp[i].y,6,0,Math.PI*2);
+    ctx.strokeStyle="rgba(255,255,255,0.55)"; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle="rgba(255,255,255,0.75)";
+    ctx.fillText(sp[i].label,sp[i].x,sp[i].y-12);
+  }
+}
+
+// ── Legend: vertical gradient 5-400 N with ticks, in N or kg  [v2.3]
+function drawLegend() {
+  const col = document.querySelector(".cbar-col");
+  if (!col) return;
+  const u = showKg ? "kg" : "N";
+  const conv = v => showKg ? (v/G0).toFixed(1) : String(v);
+  const H = 360, W = 22, ticks = [400, 300, 200, 100, 50, 5];
+  const y = v => Math.round((1 - (v - HEAT_MIN_N) / (HEAT_MAX_N - HEAT_MIN_N)) * (H - 1));
+  let labels = ticks.map(v => `<span class="cbar-label" style="position:absolute;left:${W + 6}px;top:${y(v) - 6}px">${conv(v)}</span>`).join("");
+  col.innerHTML = `<div class="cbar-label" style="margin-bottom:6px">${u}</div>
+    <div style="position:relative;width:${W + 40}px;height:${H}px">
+      <canvas id="cbarGrad" width="${W}" height="${H}" style="border-radius:4px;display:block"></canvas>${labels}
+    </div>`;
+  const ctx = document.getElementById("cbarGrad").getContext("2d");
+  for (let i = 0; i < H; i++) {
+    const v = HEAT_MAX_N - (i / (H - 1)) * (HEAT_MAX_N - HEAT_MIN_N);
+    const [r, g, b] = bandColor(v);
+    ctx.fillStyle = `rgb(${r},${g},${b})`; ctx.fillRect(0, i, W, 1);
   }
 }
 
@@ -293,7 +305,7 @@ function init3D(side) {
   animate();
 
   foot3D[side] = { pivot, renderer, scene, camera, rafId };
-  log(`3D ${side}: inizializzato ✅`);
+  log(`3D ${side}: ready ✅`);
 }
 
 function updateFoot3D(side) {
@@ -368,7 +380,9 @@ function parseFSR(line) {
     if (s>=2&&s<=6) out[s-2]=v;
   }
   if (out.some(v=>v===null)) return null;
-  return out;
+  // [v2] optional device time (T:ms) and sequence counter (N:n) from firmware v2
+  const mt=line.match(/T:(\d+)/), mn=line.match(/N:(\d+)/);
+  return { vals:out, tDev:mt?parseInt(mt[1],10):null, seq:mn?parseInt(mn[1],10):null };
 }
 
 function parseIMU(line) {
@@ -376,7 +390,17 @@ function parseIMU(line) {
   if (p[0]!=="IMU"||p.length<10) return null;
   const pitch=Number(p[8]), roll=Number(p[9]);
   if (!Number.isFinite(pitch)||!Number.isFinite(roll)) return null;
-  return {pitch,roll};
+  // [v2] raw accelerometer/gyroscope and device time (millis) are kept for the CSV
+  const num=(k)=>{ const v=Number(p[k]); return Number.isFinite(v)?v:null; };
+  return {pitch,roll, ax:num(1),ay:num(2),az:num(3), gx:num(4),gy:num(5),gz:num(6),
+          tDev:(p.length>10)?num(10):null};
+}
+
+// [v2.1] Status line from firmware v2.1: STA,RSSI:<dBm>,BATMV:<mV>,BAT:<%>
+function parseSTA(line) {
+  if (!line.startsWith("STA,")) return null;
+  const g=(k)=>{ const m=line.match(new RegExp(k+":(-?\\d+)")); return m?parseInt(m[1],10):null; };
+  return { rssi:g("RSSI"), batMv:g("BATMV"), bat:g("BAT") };
 }
 
 // ── GRF / CoP
@@ -429,7 +453,7 @@ function log(msg) {
 function setStatus(side,ok,extra="") {
   const t=(side==="Right")?el.stRight:el.stLeft;
   if (!t) return;
-  t.textContent=`${side}: ${ok?"connesso":"non connesso"} ${extra}`.trim();
+  t.textContent=`${side}: ${ok?"connected":"not connected"} ${extra}`.trim();
 }
 function fmtForce(vN) {
   if (!Number.isFinite(vN)) return "—";
@@ -438,7 +462,7 @@ function fmtForce(vN) {
 function setRecStatus() {
   if (!el.recStatus) return;
   const n=records.length;
-  el.recStatus.textContent=recording?`REC ● righe: ${n}`:(n>0?`Pronto: ${n} righe`:"");
+  el.recStatus.textContent=recording?`REC ● rows: ${n}`:(n>0?`Ready: ${n} rows`:"");
 }
 
 // ── CSV recorder
@@ -446,6 +470,7 @@ function pushRecord(side,kind) {
   if (!recording) return;
   const s=state[side];
   const tMs=Date.now();
+  const tPerf=performance.now();   // [v2] sub-millisecond browser clock
   const fsr_adc=s.lastFSR?s.lastFSR.slice():[null,null,null,null,null];
   const fsr_n=s.lastFSR?s.lastFSR.map((v,i)=>adcToN(side,i,v)):[null,null,null,null,null];
   const imu=s.lastIMU?{pitch:s.lastIMU.pitch-imuZero.pitch,roll:s.lastIMU.roll-imuZero.roll}:{pitch:null,roll:null};
@@ -456,6 +481,14 @@ function pushRecord(side,kind) {
     s2_adc:fsr_adc[0],s3_adc:fsr_adc[1],s4_adc:fsr_adc[2],s5_adc:fsr_adc[3],s6_adc:fsr_adc[4],
     s2_n:fsr_n[0],s3_n:fsr_n[1],s4_n:fsr_n[2],s5_n:fsr_n[3],s6_n:fsr_n[4],
     grf_n:grfN, pitch_deg:imu.pitch, roll_deg:imu.roll,
+    // [v2] timing and raw IMU columns
+    t_perf_ms:tPerf.toFixed(3),
+    t_dev_ms:(kind==="FSR")?s.lastFsrT:(s.lastIMU?s.lastIMU.tDev:null),
+    seq:(kind==="FSR")?s.lastFsrN:null,
+    ax:(kind==="IMU"&&s.lastIMU)?s.lastIMU.ax:null, ay:(kind==="IMU"&&s.lastIMU)?s.lastIMU.ay:null,
+    az:(kind==="IMU"&&s.lastIMU)?s.lastIMU.az:null, gx:(kind==="IMU"&&s.lastIMU)?s.lastIMU.gx:null,
+    gy:(kind==="IMU"&&s.lastIMU)?s.lastIMU.gy:null, gz:(kind==="IMU"&&s.lastIMU)?s.lastIMU.gz:null,
+    rssi_dbm:(kind==="STA")?s.rssi:null, bat_mv:(kind==="STA")?s.batMv:null, bat_pct:(kind==="STA")?s.batPct:null,
   });
   setRecStatus();
   if (el.btnRecDownload) el.btnRecDownload.disabled=(records.length===0);
@@ -474,23 +507,26 @@ function updateOut() {
   const uL=showKg?"kg":"N";
 
   if (el.out) el.out.textContent=
-`RIGHT  (rx: ${r.lastRx||"—"})
+`RIGHT  (rx: ${r.lastRx||"—"})   FSR ${r.rateFsr} Hz | IMU ${r.rateImu} Hz | lost ${r.lost}
 ADC: ${r.lastFSR?r.lastFSR.join(", "):"—"}
 N:   ${rN?rN.map(x=>showKg?(x/G0).toFixed(3):x.toFixed(1)).join(", ")+" "+uL:"—"}
 GRF: ${fmtForce(r.grfN)}
 IMU: ${rIMU?`pitch ${rIMU.pitch.toFixed(1)}°  roll ${rIMU.roll.toFixed(1)}°`:"—"}
 
-LEFT  (rx: ${l.lastRx||"—"})
+LEFT  (rx: ${l.lastRx||"—"})   FSR ${l.rateFsr} Hz | IMU ${l.rateImu} Hz | lost ${l.lost}
 ADC: ${l.lastFSR?l.lastFSR.join(", "):"—"}
 N:   ${lN?lN.map(x=>showKg?(x/G0).toFixed(3):x.toFixed(1)).join(", ")+" "+uL:"—"}
 GRF: ${fmtForce(l.grfN)}
 IMU: ${lIMU?`pitch ${lIMU.pitch.toFixed(1)}°  roll ${lIMU.roll.toFixed(1)}°`:"—"}
 
 GRF TOT: ${fmtForce(grfTot)}
-ACQ: ${acquisitionRunning?"ON":"OFF"}  |  REC: ${recording?"ON":"OFF"} (${records.length} righe)`;
+ACQ: ${acquisitionRunning?"ON":"OFF"}  |  REC: ${recording?"ON":"OFF"} (${records.length} rows)`;
 
   drawHeatmap("Right");
   drawHeatmap("Left");
+  drawChart("Right");
+  drawChart("Left");
+  updateGaitPanel();
   updateFoot3D("Right");
   updateFoot3D("Left");
 }
@@ -505,27 +541,140 @@ function onChunk(side,chunk) {
     const line=s.buf.slice(0,idx).trim(); s.buf=s.buf.slice(idx+1);
     if (!line) continue;
     s.lastRx=new Date().toLocaleTimeString();
-    if (line.startsWith("IMU,")) {
+    if (line.startsWith("STA,")) {
+      const st=parseSTA(line);
+      if (st) {
+        s.rssi=(st.rssi&&st.rssi<0)?st.rssi:null; s.batMv=st.batMv;
+        s.batPct=(st.bat!==null&&st.bat>=0)?st.bat:null; s.lastSta=performance.now();
+        s.lastSta_raw=st; pushRecord(side,"STA");
+      }
+    } else if (line.startsWith("IMU,")) {
       const imu=parseIMU(line);
-      if (imu) { s.lastIMU=imu; pushRecord(side,"IMU"); }
+      if (imu) { s.lastIMU=imu; s.nImu++; pushRecord(side,"IMU"); }
     } else {
       const fsr=parseFSR(line);
-      if (fsr) { s.lastFSR=fsr; pushRecord(side,"FSR"); }
+      if (fsr) {
+        // [v2] lost-packet count from the sequence counter
+        if (fsr.seq!==null && s.lastFsrN!==null && fsr.seq>s.lastFsrN+1) s.lost+=fsr.seq-s.lastFsrN-1;
+        s.lastFSR=fsr.vals; s.lastFsrT=fsr.tDev; s.lastFsrN=fsr.seq; s.nFsr++;
+        s.lastFsrPerf=performance.now();
+        pushRecord(side,"FSR");
+        onFsrSample(side);   // [v2.2] live chart and gait parameters
+      }
     }
   }
-  updateOut();
+  scheduleRender();   // [v2] drawing is throttled; data are recorded at full rate
 }
+
+// [v2] Rendering at most ~20 times per second: the heatmap and the 3D view are
+// expensive, and redrawing at every BLE notification (150 per second per
+// insole) would saturate the browser. Data parsing and CSV recording above
+// are not affected.
+let renderPending=false, lastRenderMs=0;
+const RENDER_MIN_MS=50;
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending=true;
+  const wait=Math.max(0, RENDER_MIN_MS-(performance.now()-lastRenderMs));
+  setTimeout(()=>requestAnimationFrame(()=>{ renderPending=false; lastRenderMs=performance.now(); updateOut(); }), wait);
+}
+
+// [v2] Effective data rates (lines per second) and lost FSR packets, once per second
+setInterval(()=>{
+  ["Right","Left"].forEach(side=>{
+    const s=state[side]; s.rateFsr=s.nFsr; s.rateImu=s.nImu; s.nFsr=0; s.nImu=0;
+    s.lostWin=s.lost-s.lostPrev; s.lostPrev=s.lost;
+    updateLinkBadge(side);
+  });
+  if (state.Right.device||state.Left.device) updateOut();
+},1000);
+
+// [v2.1] Battery and signal badge next to "Connetti Right/Left".
+// Signal: RSSI measured by the insole (firmware v2.1) combined with the data
+// actually received in the last second (rate and lost packets), so the badge
+// also works with older firmware. RSSI depends on distance, body and walls:
+// it is an indication, not a distance measurement.
+function linkLevel(s) {
+  if (!s.device) return 0;
+  const expected=Math.max(s.rateFsr,1);
+  const lossPct=100*s.lostWin/(expected+s.lostWin);
+  if (s.lastFsrPerf===null || performance.now()-s.lastFsrPerf>2000) return 0;
+  let lvl=3;
+  if (s.rssi!==null) lvl = s.rssi>=-65?3 : s.rssi>=-80?2 : 1;
+  if (lossPct>5) lvl=Math.min(lvl,1); else if (lossPct>1) lvl=Math.min(lvl,2);
+  return lvl;
+}
+function updateLinkBadge(side) {
+  const s=state[side];
+  const b=document.getElementById(side==="Right"?"linkRight":"linkLeft");
+  if (!b) return;
+  const lvl=linkLevel(s);
+  const names=["none","weak","fair","strong"];
+  const bars=b.querySelectorAll(".bar");
+  bars.forEach((bar,i)=>{ bar.classList.toggle("on", i<lvl); });
+  b.dataset.level=lvl;
+  const sig=b.querySelector(".sigtxt");
+  if (sig) sig.textContent=`signal ${names[lvl]}${s.rssi!==null?` (${s.rssi} dBm)`:""}`;
+  const bat=b.querySelector(".battxt");
+  if (bat) {
+    bat.textContent = !s.device ? "battery —" : (s.batPct!==null ? `battery ${s.batPct}%` : "battery n/a");
+    bat.dataset.low = (s.batPct!==null && s.batPct<=20) ? "1" : "0";
+  }
+  if (s.device && lvl===1 && !s._warned) { log(`${side}: weak signal, move the computer closer`); s._warned=true; }
+  if (lvl>=2) s._warned=false;
+}
+
+// [v2.1] SYNC mark: press the space bar (or the SYNC button) at the same moment
+// as Start (and Stop) in SMART. Each press adds a row kind=SYNC to the CSV with
+// the browser time and the insole device time at that instant, which the
+// analysis uses to place the SMART capture on the insole clock.
+let syncCount=0;
+function markSync(source) {
+  const now=performance.now();
+  syncCount++;
+  log(`SYNC #${syncCount} (${source})${recording?"":"  [REC off: not saved]"}`);
+  const btn=document.getElementById("btnSync");
+  if (btn) { btn.classList.add("flash"); setTimeout(()=>btn.classList.remove("flash"),250); }
+  if (!recording) return;
+  ["Right","Left"].forEach(side=>{
+    const s=state[side];
+    if (!s.device) return;
+    const tDev=(s.lastFsrT!==null&&s.lastFsrPerf!==null)?(s.lastFsrT+(now-s.lastFsrPerf)):null;
+    records.push({
+      iso:new Date().toISOString(), t_ms:Date.now(), rel_ms:recStartMs?(Date.now()-recStartMs):0,
+      foot:side, kind:"SYNC", t_perf_ms:now.toFixed(3), t_dev_ms:tDev!==null?tDev.toFixed(1):null, seq:syncCount,
+    });
+  });
+  setRecStatus();
+}
+// While recording, the space bar is always a SYNC mark (also with the cursor
+// in the trial-name field: trial names contain no spaces). When not
+// recording it types normally in text fields.
+function spaceIsSync(ev) {
+  const tag=(ev.target&&ev.target.tagName)||"";
+  if (tag==="SELECT") return false;
+  if (tag==="INPUT"||tag==="TEXTAREA") return recording;
+  return true;
+}
+document.addEventListener("keydown",(ev)=>{
+  if (ev.code!=="Space" || !spaceIsSync(ev)) return;
+  ev.preventDefault();
+  if (!ev.repeat) markSync("space bar");
+},true);
+document.addEventListener("keyup",(ev)=>{
+  if (ev.code==="Space" && spaceIsSync(ev)) ev.preventDefault();   // the space bar never clicks a focused button
+},true);
 
 // ── BLE connect
 async function connectSide(side) {
-  if (!navigator.bluetooth) { alert("Web Bluetooth non disponibile. Usa Chrome/Edge."); return; }
+  if (!navigator.bluetooth) { alert("Web Bluetooth is not available. Use Chrome or Edge."); return; }
   const wantName=(side==="Right")?DEVNAME_RIGHT:DEVNAME_LEFT;
   log(`Scan BLE (${side}): ${wantName}`);
   const device=await navigator.bluetooth.requestDevice({
     filters:[{name:wantName}], optionalServices:[SERVICE_UUID],
   });
   device.addEventListener("gattserverdisconnected",()=>{
-    log(`${side}: disconnesso`); setStatus(side,false);
+    log(`${side}: disconnected`); setStatus(side,false);
     state[side].device=null; updateOut();
   });
   const server=await device.gatt.connect();
@@ -540,9 +689,13 @@ async function connectSide(side) {
   chIMU.addEventListener("characteristicvaluechanged",(ev)=>{
     onChunk(side,new TextDecoder().decode(ev.target.value));
   });
+  // [v2] control characteristic (firmware commands), optional
+  try { state[side].ctrl=await service.getCharacteristic(CHAR_UUID_CONTROL); }
+  catch(e) { state[side].ctrl=null; log(`${side}: command channel not available`); }
+  state[side].lost=0; state[side].lastFsrN=null;
   state[side].device=device;
   setStatus(side,true,`(${device.name})`);
-  log(`${side}: connesso a ${device.name}`);
+  log(`${side}: connected to ${device.name}`);
   if (!acquisitionRunning) startAcquisition();
   updateOut();
 }
@@ -552,28 +705,28 @@ function startAcquisition() {
   acquisitionRunning=true;
   if (el.btnStart) el.btnStart.disabled=true;
   if (el.btnStop)  el.btnStop.disabled=false;
-  log("Acquisizione START ▶️"); updateOut();
+  log("Acquisition START ▶️"); updateOut();
 }
 function stopAcquisition() {
   acquisitionRunning=false;
   if (el.btnStart) el.btnStart.disabled=false;
   if (el.btnStop)  el.btnStop.disabled=true;
-  log("Acquisizione STOP ⏹️"); updateOut();
+  log("Acquisition STOP ⏹️"); updateOut();
 }
 function disconnectAll() {
   ["Right","Left"].forEach(side=>{
     try { if (state[side].device?.gatt?.connected) state[side].device.gatt.disconnect(); } catch(_){}
-    state[side].device=null; state[side].buf="";
-    state[side].lastFSR=null; state[side].lastIMU=null;
+    state[side].device=null; state[side].ctrl=null; state[side].buf="";
+    state[side].lastFSR=null; state[side].lastIMU=null; state[side].lastFsrN=null; state[side].lost=0;
     state[side].lastRx=null; state[side].grfN=0;
     copTrace[side]=[]; setStatus(side,false);
   });
   stopAcquisition();
-  log("Disconnect: completato ✅");
+  log("Disconnect: done ✅");
 }
 function zeroIMU() {
   const ref=state.Right.lastIMU||state.Left.lastIMU;
-  if (!ref) { log("Zero IMU: nessun dato IMU"); return; }
+  if (!ref) { log("Zero IMU: no IMU data"); return; }
   imuZero={pitch:ref.pitch,roll:ref.roll};
   log("Zero IMU ✅"); updateOut();
 }
@@ -584,6 +737,7 @@ function resetAll() {
     copTrace[side]=[];
   });
   imuZero={pitch:0,roll:0};
+  gait.Right=newGait(); gait.Left=newGait(); chartBuf.Right=[]; chartBuf.Left=[];
   log("Reset ✅"); updateOut();
 }
 
@@ -593,6 +747,8 @@ function recStart() {
   if (el.btnRecStart) el.btnRecStart.disabled=true;
   if (el.btnRecStop)  el.btnRecStop.disabled=false;
   if (el.btnRecDownload) el.btnRecDownload.disabled=true;
+  syncCount=0;
+  gait.Right=newGait(); gait.Left=newGait();
   log("REC START ●"); setRecStatus(); updateOut();
 }
 function recStop() {
@@ -600,7 +756,7 @@ function recStop() {
   if (el.btnRecStart) el.btnRecStart.disabled=false;
   if (el.btnRecStop)  el.btnRecStop.disabled=true;
   if (el.btnRecDownload) el.btnRecDownload.disabled=(records.length===0);
-  log(`REC STOP ■ (${records.length} righe)`); setRecStatus(); updateOut();
+  log(`REC STOP ■ (${records.length} rows)`); setRecStatus(); updateOut();
 }
 function toCsvValue(v) {
   if (v===null||v===undefined) return "";
@@ -608,24 +764,171 @@ function toCsvValue(v) {
   return (s.includes(",")||s.includes('"')||s.includes("\n"))?`"${s.replace(/"/g,'""')}"`:s;
 }
 function downloadCsv() {
-  if (!records.length) { log("CSV: nessun dato"); return; }
+  if (!records.length) { log("CSV: no data"); return; }
   const pid=(el.patientId?.value||"").trim();
   const stamp=new Date().toISOString().replace(/[:.]/g,"-");
-  const fname=`SmartInsole_${pid?pid+"_":""}session_${stamp}.csv`;
+  // [v2] the ID field holds the trial name (e.g. P01_walk_self_03): file = <trial>_<time>.csv
+  const safe=pid.replace(/[^A-Za-z0-9_\-]/g,"_");
+  const fname=safe?`${safe}_${stamp}.csv`:`SmartInsole_session_${stamp}.csv`;
   const header=["iso","t_ms","rel_ms","foot","kind",
     "s2_adc","s3_adc","s4_adc","s5_adc","s6_adc",
-    "s2_n","s3_n","s4_n","s5_n","s6_n","grf_n","pitch_deg","roll_deg"].join(",");
+    "s2_n","s3_n","s4_n","s5_n","s6_n","grf_n","pitch_deg","roll_deg",
+    "t_perf_ms","t_dev_ms","seq","ax","ay","az","gx","gy","gz",
+    "rssi_dbm","bat_mv","bat_pct",
+    "step_n","ic_ms","to_ms","stance_ms","swing_ms","stride_ms","cadence_spm","stance_pct","peak_n"].join(",");   // [v2.2] STEP rows   // [v2] new columns appended, [v2.1] status and SYNC
   const lines=[header,...records.map(r=>[
     r.iso,r.t_ms,r.rel_ms,r.foot,r.kind,
     r.s2_adc,r.s3_adc,r.s4_adc,r.s5_adc,r.s6_adc,
-    r.s2_n,r.s3_n,r.s4_n,r.s5_n,r.s6_n,r.grf_n,r.pitch_deg,r.roll_deg
+    r.s2_n,r.s3_n,r.s4_n,r.s5_n,r.s6_n,r.grf_n,r.pitch_deg,r.roll_deg,
+    r.t_perf_ms,r.t_dev_ms,r.seq,r.ax,r.ay,r.az,r.gx,r.gy,r.gz,
+    r.rssi_dbm,r.bat_mv,r.bat_pct,
+    r.step_n,r.ic_ms,r.to_ms,r.stance_ms,r.swing_ms,r.stride_ms,r.cadence_spm,r.stance_pct,r.peak_n
   ].map(toCsvValue).join(","))];
   const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a"); a.href=url; a.download=fname;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-  log(`CSV scaricato ✅ (${fname})`);
+  log(`CSV downloaded ✅ (${fname})`);
+}
+
+// ── [v2] Firmware commands: sampling rate
+async function sendCmd(side,cmd) {
+  const s=state[side];
+  if (!s.device||!s.ctrl) return false;
+  await s.ctrl.writeValue(new TextEncoder().encode(cmd+"\n"));
+  log(`${side}: ${cmd}`);
+  return true;
+}
+async function applyRate() {
+  const sel=document.getElementById("selRate");
+  const v=sel?sel.value:"100";
+  const cmds={ "100":["SET SI:10,RI:10","SET IMU:20"],
+               "50": ["SET SI:20,RI:20","SET IMU:20"],
+               "old":["SET SI:50,RI:200","SET IMU:100"] }[v];
+  let n=0;
+  for (const side of ["Right","Left"]) {
+    try { for (const c of cmds) { if (await sendCmd(side,c)) n++; } }
+    catch(e) { log(`${side} command error: ${e?.message||e}`); }
+  }
+  if (!n) log("Sampling rate: no insole connected");
+  for (const side of ["Right","Left"]) state[side].lost=0;
+}
+
+// =====================================================================
+// [v2.2] Live force chart and live gait parameters
+// =====================================================================
+// Chart: the last CHART_WINDOW_S seconds of the five sensor forces and of
+// the total force of each foot, redrawn with the other views (max ~20 fps).
+const CHART_WINDOW_S = 6;
+const SENSOR_COLORS = ["#4cc9f0","#4361ee","#90be6d","#f9c74f","#f3722c"];   // S2..S6
+const chartBuf = { Right:[], Left:[] };   // {t, f:[5], tot}
+
+function sampleTime(s) {
+  // device time (s) when the firmware sends it, otherwise browser time
+  return (s.lastFsrT!==null && s.lastFsrT!==undefined) ? s.lastFsrT/1000 : performance.now()/1000;
+}
+
+function onFsrSample(side) {
+  const s=state[side];
+  if (!s.lastFSR) return;
+  const f=s.lastFSR.map((v,i)=>adcToN(side,i,v));
+  const tot=f.reduce((a,b)=>a+b,0);
+  const tp=performance.now()/1000;
+  const buf=chartBuf[side];
+  buf.push({t:tp, f, tot});
+  while (buf.length && tp-buf[0].t>CHART_WINDOW_S) buf.shift();
+  gaitUpdate(side, sampleTime(s), tot);
+}
+
+function drawChart(side) {
+  const cv=document.getElementById(side==="Right"?"cvChartR":"cvChartL");
+  if (!cv) return;
+  const ctx=cv.getContext("2d"), W=cv.width, H=cv.height;
+  const padL=38, padB=18, padT=8, padR=6;
+  ctx.clearRect(0,0,W,H);
+  const buf=chartBuf[side];
+  const tNow=performance.now()/1000;
+  let ymax=50;
+  for (const p of buf) ymax=Math.max(ymax,p.tot);
+  const step=ymax>400?200:ymax>200?100:ymax>100?50:25;
+  ymax=Math.ceil(ymax*1.1/step)*step;
+  const X=(t)=>padL+(W-padL-padR)*(1-(tNow-t)/CHART_WINDOW_S);
+  const Y=(v)=>H-padB-(H-padB-padT)*Math.max(0,v)/ymax;
+  // grid and labels
+  ctx.strokeStyle="rgba(128,128,128,0.25)"; ctx.fillStyle="#888"; ctx.font="10px sans-serif"; ctx.lineWidth=1;
+  for (let v=0; v<=ymax; v+=step) {
+    ctx.beginPath(); ctx.moveTo(padL,Y(v)); ctx.lineTo(W-padR,Y(v)); ctx.stroke();
+    ctx.fillText(String(v), 4, Y(v)+3);
+  }
+  for (let k=0;k<=CHART_WINDOW_S;k+=2) ctx.fillText(`-${CHART_WINDOW_S-k} s`, X(tNow-CHART_WINDOW_S+k)-12, H-4);
+  ctx.save(); ctx.translate(10,H/2); ctx.rotate(-Math.PI/2); ctx.restore();
+  if (buf.length<2) { ctx.fillText("no data", padL+10, padT+14); return; }
+  const line=(get,color,width)=>{
+    ctx.strokeStyle=color; ctx.lineWidth=width; ctx.beginPath();
+    buf.forEach((p,i)=>{ const x=X(p.t), y=Y(get(p)); if(i) ctx.lineTo(x,y); else ctx.moveTo(x,y); });
+    ctx.stroke();
+  };
+  for (let i=0;i<5;i++) line(p=>p.f[i], SENSOR_COLORS[i], 1.2);
+  line(p=>p.tot, getComputedStyle(cv).color||"#ddd", 2);
+}
+
+// Gait parameters from the total force of one insole. Contact when the force
+// rises above max(20 N, 10 % of the recent peak), toe-off when it falls below
+// 80 % of that threshold. A stride (IC to next IC) is completed at the toe-off
+// of the following step; strides longer than 2.5 s (standing, turning) are
+// not reported. Cadence assumes symmetric steps (120 / stride time).
+// These live values are for display and quick checks; the validation uses
+// the offline analysis of the raw CSV.
+const GAIT_MIN_N=20, GAIT_FRAC=0.10, GAIT_MAX_STRIDE_S=2.5;
+function newGait() { return {inStance:false, ic:null, peak:0, runPeak:0, prev:null, n:0, strides:[]}; }
+const gait={ Right:newGait(), Left:newGait() };
+
+function gaitUpdate(side, t, F) {
+  const g=gait[side];
+  g.runPeak=Math.max(g.runPeak*0.9995, F);
+  const on=Math.max(GAIT_MIN_N, GAIT_FRAC*g.runPeak), off=0.8*on;
+  if (!g.inStance) {
+    if (F>on) { g.inStance=true; g.ic=t; g.peak=F; }
+    return;
+  }
+  g.peak=Math.max(g.peak,F);
+  if (F>=off) return;
+  g.inStance=false;
+  const cur={ic:g.ic, to:t, stance:t-g.ic, peak:g.peak};
+  if (cur.stance<0.2 || cur.stance>3) return;           // spurious or standing
+  const p=g.prev; g.prev=cur;
+  if (!p) return;
+  const stride=cur.ic-p.ic;
+  if (stride<=0.4 || stride>GAIT_MAX_STRIDE_S) return;
+  g.n++;
+  const st={ n:g.n, ic:p.ic, to:p.to, stance:p.stance, swing:cur.ic-p.to, stride,
+             cadence:120/stride, stancePct:100*p.stance/stride, peak:p.peak };
+  g.strides.push(st); if (g.strides.length>200) g.strides.shift();
+  if (recording) {
+    records.push({ iso:new Date().toISOString(), t_ms:Date.now(), rel_ms:recStartMs?(Date.now()-recStartMs):0,
+      foot:side, kind:"STEP", t_perf_ms:performance.now().toFixed(3),
+      step_n:st.n, ic_ms:(st.ic*1000).toFixed(1), to_ms:(st.to*1000).toFixed(1),
+      stance_ms:(st.stance*1000).toFixed(1), swing_ms:(st.swing*1000).toFixed(1), stride_ms:(st.stride*1000).toFixed(1),
+      cadence_spm:st.cadence.toFixed(1), stance_pct:st.stancePct.toFixed(1), peak_n:st.peak.toFixed(1) });
+  }
+}
+
+function updateGaitPanel() {
+  const out=document.getElementById("gaitOut");
+  if (!out) return;
+  const fmt=(side)=>{
+    const g=gait[side]; const last=g.strides.slice(-10);
+    if (!last.length) return `${side.toUpperCase()}: no strides yet`;
+    const m=(k)=>last.reduce((a,b)=>a+b[k],0)/last.length;
+    const L=last[last.length-1];
+    return `${side.toUpperCase()}: strides ${g.n}
+  last     stance ${(L.stance*1000).toFixed(0)} ms | swing ${(L.swing*1000).toFixed(0)} ms | stride ${(L.stride*1000).toFixed(0)} ms | cadence ${L.cadence.toFixed(1)} steps/min | stance ${L.stancePct.toFixed(1)} % | peak ${fmtForce(L.peak)}
+  mean ${String(last.length).padStart(2)}  stance ${(m("stance")*1000).toFixed(0)} ms | swing ${(m("swing")*1000).toFixed(0)} ms | stride ${(m("stride")*1000).toFixed(0)} ms | cadence ${m("cadence").toFixed(1)} steps/min | stance ${m("stancePct").toFixed(1)} % | peak ${fmtForce(m("peak"))}`;
+  };
+  out.textContent=`${fmt("Right")}
+
+${fmt("Left")}`;
 }
 
 // ── Init 3D when Three.js is ready
@@ -636,10 +939,10 @@ function tryInit3D() {
 
 // ── Wire up
 if (el.log) el.log.textContent="";
-if (el.jsOk) el.jsOk.textContent="JS caricato ✅";
-log("JS caricato ✅");
+if (el.jsOk) el.jsOk.textContent=`JS loaded ✅ (app ${APP_VERSION})`;
+log(`JS loaded ✅ (app ${APP_VERSION})`);
 
-if (el.chkKg) el.chkKg.addEventListener("change",()=>{ showKg=!!el.chkKg.checked; updateOut(); });
+if (el.chkKg) el.chkKg.addEventListener("change",()=>{ showKg=!!el.chkKg.checked; drawLegend(); updateOut(); });
 if (el.btnRight) el.btnRight.addEventListener("click",()=>connectSide("Right").catch(e=>log(`Right ERR: ${e?.message||e}`)));
 if (el.btnLeft)  el.btnLeft.addEventListener("click", ()=>connectSide("Left").catch(e=>log(`Left ERR: ${e?.message||e}`)));
 if (el.btnStart)      el.btnStart.addEventListener("click",startAcquisition);
@@ -650,8 +953,13 @@ if (el.btnReset)      el.btnReset.addEventListener("click",resetAll);
 if (el.btnRecStart)   el.btnRecStart.addEventListener("click",recStart);
 if (el.btnRecStop)    el.btnRecStop.addEventListener("click",recStop);
 if (el.btnRecDownload) el.btnRecDownload.addEventListener("click",downloadCsv);
+const btnSync=document.getElementById("btnSync");
+if (btnSync) btnSync.addEventListener("click",(ev)=>{ markSync("button"); ev.currentTarget.blur(); });
+const btnRate=document.getElementById("btnRate");
+if (btnRate) btnRate.addEventListener("click",()=>applyRate());
 
 setRecStatus();
+drawLegend();
 updateOut();
 tryInit3D();
-log("Handler attivi ✅");
+log("Handlers ready ✅");

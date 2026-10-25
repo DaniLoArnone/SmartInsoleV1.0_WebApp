@@ -1,49 +1,60 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SmartInsole Webapp</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
 
 <h2>SmartInsole – BLE + Heatmap + 3D</h2>
 
-<!-- ── Connessione ── -->
+<!-- ── Connection ── -->
 <div class="row-wrap">
-  <button id="btnRight">Connetti Right</button>
-  <span id="stRight" class="status">Right: non connesso</span>
-  <button id="btnLeft" style="margin-left:16px">Connetti Left</button>
-  <span id="stLeft" class="status">Left: non connesso</span>
+  <button id="btnRight">Connect Right</button>
+  <span id="stRight" class="status">Right: not connected</span>
+  <span id="linkRight" class="link" data-level="0"><span class="bars"><i class="bar"></i><i class="bar"></i><i class="bar"></i></span><span class="sigtxt">signal —</span> · <span class="battxt">battery —</span></span>
+  <button id="btnLeft" style="margin-left:16px">Connect Left</button>
+  <span id="stLeft" class="status">Left: not connected</span>
+  <span id="linkLeft" class="link" data-level="0"><span class="bars"><i class="bar"></i><i class="bar"></i><i class="bar"></i></span><span class="sigtxt">signal —</span> · <span class="battxt">battery —</span></span>
 </div>
 
-<!-- ── Controlli acquisizione ── -->
+<!-- ── Acquisition ── -->
 <div class="row-wrap" style="margin-top:10px">
   <button id="btnStart">Start</button>
   <button id="btnStop" disabled>Stop</button>
   <button id="btnDisconnect">Disconnect</button>
 </div>
 
-<!-- ── Utility ── -->
+<!-- ── Utilities ── -->
 <div class="row-wrap" style="margin-top:10px">
-  <label><input type="checkbox" id="chkKg"> Mostra kg</label>
+  <label><input type="checkbox" id="chkKg"> Show kg</label>
   <button id="btnZeroIMU">Zero IMU</button>
   <button id="btnReset">Reset</button>
+  <label style="margin-left:16px">Sampling rate
+    <select id="selRate">
+      <option value="100" selected>FSR 100 Hz, IMU 50 Hz</option>
+      <option value="50">FSR 50 Hz, IMU 50 Hz</option>
+      <option value="old">Legacy (FSR mean 5 Hz, IMU 10 Hz)</option>
+    </select>
+  </label>
+  <button id="btnRate">Apply rate</button>
 </div>
 
 <!-- ── Session Recorder ── -->
 <h3>Session Recorder</h3>
 <div class="row-wrap">
-  <input id="patientId" placeholder="Patient ID (opz.)" />
+  <input id="patientId" placeholder="Trial name (e.g. P01_walk_self_03)" />
   <button id="btnRecStart">REC Start</button>
   <button id="btnRecStop" disabled>REC Stop</button>
   <button id="btnRecDownload" disabled>Download CSV</button>
+  <button id="btnSync" title="Press together with Start and Stop of the motion-capture system">SYNC (space bar)</button>
   <span id="recStatus" class="status"></span>
 </div>
 
-<!-- ── Visualizzazione principale ── -->
-<h3>Heatmap pressioni plantari</h3>
+<!-- ── Main view ── -->
+<h3>Plantar force map</h3>
 <div class="viz-row">
 
   <!-- LEFT foot column -->
@@ -58,7 +69,7 @@
     <canvas id="cvHeatR" width="200" height="498" class="heatmap-cv"></canvas>
   </div>
 
-  <!-- Colorbar -->
+  <!-- Legend (bands in N, drawn by app.js) -->
   <div class="cbar-col">
     <span class="cbar-label" id="cbarMax">— N</span>
     <canvas id="cbar" width="22" height="440" class="cbar-cv"></canvas>
@@ -68,7 +79,7 @@
 </div>
 
 <!-- ── 3D Foot models ── -->
-<h3>Modello 3D – orientamento IMU</h3>
+<h3>3D foot model – IMU orientation</h3>
 <div class="viz-row">
   <div class="foot-col">
     <div class="foot-title">LEFT 3D</div>
@@ -80,8 +91,20 @@
   </div>
 </div>
 
-<!-- ── Dati testuali ── -->
-<h3>Dati</h3>
+<!-- ── Live force chart [v2.2] ── -->
+<h3>Live force (last 6 s)</h3>
+<div class="chart-legend"><span style="color:#4cc9f0">■ S2 big toe</span> <span style="color:#4361ee">■ S3 forefoot</span> <span style="color:#90be6d">■ S4 midfoot</span> <span style="color:#f9c74f">■ S5 hindfoot</span> <span style="color:#f3722c">■ S6 heel</span> <span class="tot">▬ total</span></div>
+<div class="viz-row">
+  <div class="foot-col"><div class="foot-title">LEFT</div><canvas id="cvChartL" class="chart-cv" width="480" height="170"></canvas></div>
+  <div class="foot-col"><div class="foot-title">RIGHT</div><canvas id="cvChartR" class="chart-cv" width="480" height="170"></canvas></div>
+</div>
+
+<!-- ── Live gait parameters [v2.2] ── -->
+<h3>Gait parameters (live)</h3>
+<pre id="gaitOut">—</pre>
+
+<!-- ── Text data ── -->
+<h3>Data</h3>
 <pre id="out">—</pre>
 
 <!-- ── Log ── -->
@@ -92,22 +115,9 @@
 
 <!-- Three.js r128 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=8"></script>
 
-<!-- Colorbar init (after app.js defines heatColor) -->
-<script>
-(function initCbar(){
-  const cv = document.getElementById("cbar");
-  if (!cv || typeof heatColor === "undefined") { setTimeout(initCbar, 300); return; }
-  const ctx = cv.getContext("2d");
-  const h = cv.height;
-  for (let y=0;y<h;y++){
-    const [r,g,b] = heatColor(1-y/h);
-    ctx.fillStyle=`rgb(${r},${g},${b})`;
-    ctx.fillRect(0,y,cv.width,1);
-  }
-})();
-</script>
+
 
 </body>
 </html>

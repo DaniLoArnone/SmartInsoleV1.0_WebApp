@@ -128,3 +128,21 @@ pre {
   .foot3d { width: 160px; height: 200px; }
   .heatmap-cv { width: 150px; height: 374px; }
 }
+
+/* [v2.1] link and battery badge, SYNC button */
+.link{display:inline-flex;align-items:center;gap:6px;margin-left:8px;font-size:13px;color:#9a9ac0}
+.link .bars{display:inline-flex;align-items:flex-end;gap:2px;height:14px}
+.link .bar{display:inline-block;width:4px;background:#3a3a55;border-radius:1px}
+.link .bar:nth-child(1){height:5px}.link .bar:nth-child(2){height:9px}.link .bar:nth-child(3){height:14px}
+.link[data-level="1"] .bar.on{background:#d33}
+.link[data-level="2"] .bar.on{background:#e8a200}
+.link[data-level="3"] .bar.on{background:#2a9d4b}
+.link .battxt[data-low="1"]{color:#d33;font-weight:600}
+#btnSync{font-weight:600}
+#btnSync.flash{background:#2a9d4b;color:#fff}
+
+/* [v2.2] live force chart */
+.chart-cv{width:100%;max-width:480px;height:auto;color:#e6e6e6;background:rgba(127,127,127,0.06);border-radius:8px}
+.chart-legend{font-size:12px;margin:2px 0 6px}
+.chart-legend span{margin-right:10px}
+#gaitOut{white-space:pre-wrap}
