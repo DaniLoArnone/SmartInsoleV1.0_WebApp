@@ -6,6 +6,8 @@
 const SERVICE_UUID  = "12345678-1234-1234-1234-1234567890ab";
 const CHAR_UUID_FSR = "abcd1234-5678-90ab-cdef-1234567890ab";
 const CHAR_UUID_IMU = "11223344-5566-7788-99aa-bbccddeeff00";
+const CHAR_UUID_CONTROL = "dcba4321-8765-ba09-fedc-0987654321ba"; // [v2] firmware commands
+const APP_VERSION = "v2 (2026-10)";
 
 const DEVNAME_RIGHT = "ESP32-FSR-IMU";
 const DEVNAME_LEFT  = "ESP32-FSR-IMU";
@@ -14,8 +16,10 @@ const G0 = 9.80665;
 
 // ── State
 const state = {
-  Right: { device:null, buf:"", lastFSR:null, lastIMU:null, lastRx:null, grfN:0 },
-  Left:  { device:null, buf:"", lastFSR:null, lastIMU:null, lastRx:null, grfN:0 },
+  Right: { device:null, ctrl:null, buf:"", lastFSR:null, lastFsrT:null, lastFsrN:null, lastIMU:null, lastRx:null, grfN:0,
+           nFsr:0, nImu:0, lost:0, rateFsr:0, rateImu:0 },
+  Left:  { device:null, ctrl:null, buf:"", lastFSR:null, lastFsrT:null, lastFsrN:null, lastIMU:null, lastRx:null, grfN:0,
+           nFsr:0, nImu:0, lost:0, rateFsr:0, rateImu:0 },
 };
 
 let acquisitionRunning = false;
@@ -368,7 +372,9 @@ function parseFSR(line) {
     if (s>=2&&s<=6) out[s-2]=v;
   }
   if (out.some(v=>v===null)) return null;
-  return out;
+  // [v2] optional device time (T:ms) and sequence counter (N:n) from firmware v2
+  const mt=line.match(/T:(\d+)/), mn=line.match(/N:(\d+)/);
+  return { vals:out, tDev:mt?parseInt(mt[1],10):null, seq:mn?parseInt(mn[1],10):null };
 }
 
 function parseIMU(line) {
@@ -376,7 +382,10 @@ function parseIMU(line) {
   if (p[0]!=="IMU"||p.length<10) return null;
   const pitch=Number(p[8]), roll=Number(p[9]);
   if (!Number.isFinite(pitch)||!Number.isFinite(roll)) return null;
-  return {pitch,roll};
+  // [v2] raw accelerometer/gyroscope and device time (millis) are kept for the CSV
+  const num=(k)=>{ const v=Number(p[k]); return Number.isFinite(v)?v:null; };
+  return {pitch,roll, ax:num(1),ay:num(2),az:num(3), gx:num(4),gy:num(5),gz:num(6),
+          tDev:(p.length>10)?num(10):null};
 }
 
 // ── GRF / CoP
@@ -446,6 +455,7 @@ function pushRecord(side,kind) {
   if (!recording) return;
   const s=state[side];
   const tMs=Date.now();
+  const tPerf=performance.now();   // [v2] sub-millisecond browser clock
   const fsr_adc=s.lastFSR?s.lastFSR.slice():[null,null,null,null,null];
   const fsr_n=s.lastFSR?s.lastFSR.map((v,i)=>adcToN(side,i,v)):[null,null,null,null,null];
   const imu=s.lastIMU?{pitch:s.lastIMU.pitch-imuZero.pitch,roll:s.lastIMU.roll-imuZero.roll}:{pitch:null,roll:null};
@@ -456,6 +466,13 @@ function pushRecord(side,kind) {
     s2_adc:fsr_adc[0],s3_adc:fsr_adc[1],s4_adc:fsr_adc[2],s5_adc:fsr_adc[3],s6_adc:fsr_adc[4],
     s2_n:fsr_n[0],s3_n:fsr_n[1],s4_n:fsr_n[2],s5_n:fsr_n[3],s6_n:fsr_n[4],
     grf_n:grfN, pitch_deg:imu.pitch, roll_deg:imu.roll,
+    // [v2] timing and raw IMU columns
+    t_perf_ms:tPerf.toFixed(3),
+    t_dev_ms:(kind==="FSR")?s.lastFsrT:(s.lastIMU?s.lastIMU.tDev:null),
+    seq:(kind==="FSR")?s.lastFsrN:null,
+    ax:(kind==="IMU"&&s.lastIMU)?s.lastIMU.ax:null, ay:(kind==="IMU"&&s.lastIMU)?s.lastIMU.ay:null,
+    az:(kind==="IMU"&&s.lastIMU)?s.lastIMU.az:null, gx:(kind==="IMU"&&s.lastIMU)?s.lastIMU.gx:null,
+    gy:(kind==="IMU"&&s.lastIMU)?s.lastIMU.gy:null, gz:(kind==="IMU"&&s.lastIMU)?s.lastIMU.gz:null,
   });
   setRecStatus();
   if (el.btnRecDownload) el.btnRecDownload.disabled=(records.length===0);
@@ -474,13 +491,13 @@ function updateOut() {
   const uL=showKg?"kg":"N";
 
   if (el.out) el.out.textContent=
-`RIGHT  (rx: ${r.lastRx||"—"})
+`RIGHT  (rx: ${r.lastRx||"—"})   FSR ${r.rateFsr} Hz | IMU ${r.rateImu} Hz | persi ${r.lost}
 ADC: ${r.lastFSR?r.lastFSR.join(", "):"—"}
 N:   ${rN?rN.map(x=>showKg?(x/G0).toFixed(3):x.toFixed(1)).join(", ")+" "+uL:"—"}
 GRF: ${fmtForce(r.grfN)}
 IMU: ${rIMU?`pitch ${rIMU.pitch.toFixed(1)}°  roll ${rIMU.roll.toFixed(1)}°`:"—"}
 
-LEFT  (rx: ${l.lastRx||"—"})
+LEFT  (rx: ${l.lastRx||"—"})   FSR ${l.rateFsr} Hz | IMU ${l.rateImu} Hz | persi ${l.lost}
 ADC: ${l.lastFSR?l.lastFSR.join(", "):"—"}
 N:   ${lN?lN.map(x=>showKg?(x/G0).toFixed(3):x.toFixed(1)).join(", ")+" "+uL:"—"}
 GRF: ${fmtForce(l.grfN)}
@@ -507,14 +524,40 @@ function onChunk(side,chunk) {
     s.lastRx=new Date().toLocaleTimeString();
     if (line.startsWith("IMU,")) {
       const imu=parseIMU(line);
-      if (imu) { s.lastIMU=imu; pushRecord(side,"IMU"); }
+      if (imu) { s.lastIMU=imu; s.nImu++; pushRecord(side,"IMU"); }
     } else {
       const fsr=parseFSR(line);
-      if (fsr) { s.lastFSR=fsr; pushRecord(side,"FSR"); }
+      if (fsr) {
+        // [v2] lost-packet count from the sequence counter
+        if (fsr.seq!==null && s.lastFsrN!==null && fsr.seq>s.lastFsrN+1) s.lost+=fsr.seq-s.lastFsrN-1;
+        s.lastFSR=fsr.vals; s.lastFsrT=fsr.tDev; s.lastFsrN=fsr.seq; s.nFsr++;
+        pushRecord(side,"FSR");
+      }
     }
   }
-  updateOut();
+  scheduleRender();   // [v2] drawing is throttled; data are recorded at full rate
 }
+
+// [v2] Rendering at most ~20 times per second: the heatmap and the 3D view are
+// expensive, and redrawing at every BLE notification (150 per second per
+// insole) would saturate the browser. Data parsing and CSV recording above
+// are not affected.
+let renderPending=false, lastRenderMs=0;
+const RENDER_MIN_MS=50;
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending=true;
+  const wait=Math.max(0, RENDER_MIN_MS-(performance.now()-lastRenderMs));
+  setTimeout(()=>requestAnimationFrame(()=>{ renderPending=false; lastRenderMs=performance.now(); updateOut(); }), wait);
+}
+
+// [v2] Effective data rates (lines per second) and lost FSR packets, once per second
+setInterval(()=>{
+  ["Right","Left"].forEach(side=>{
+    const s=state[side]; s.rateFsr=s.nFsr; s.rateImu=s.nImu; s.nFsr=0; s.nImu=0;
+  });
+  if (state.Right.device||state.Left.device) updateOut();
+},1000);
 
 // ── BLE connect
 async function connectSide(side) {
@@ -540,6 +583,10 @@ async function connectSide(side) {
   chIMU.addEventListener("characteristicvaluechanged",(ev)=>{
     onChunk(side,new TextDecoder().decode(ev.target.value));
   });
+  // [v2] control characteristic (firmware commands), optional
+  try { state[side].ctrl=await service.getCharacteristic(CHAR_UUID_CONTROL); }
+  catch(e) { state[side].ctrl=null; log(`${side}: canale comandi non disponibile`); }
+  state[side].lost=0; state[side].lastFsrN=null;
   state[side].device=device;
   setStatus(side,true,`(${device.name})`);
   log(`${side}: connesso a ${device.name}`);
@@ -563,8 +610,8 @@ function stopAcquisition() {
 function disconnectAll() {
   ["Right","Left"].forEach(side=>{
     try { if (state[side].device?.gatt?.connected) state[side].device.gatt.disconnect(); } catch(_){}
-    state[side].device=null; state[side].buf="";
-    state[side].lastFSR=null; state[side].lastIMU=null;
+    state[side].device=null; state[side].ctrl=null; state[side].buf="";
+    state[side].lastFSR=null; state[side].lastIMU=null; state[side].lastFsrN=null; state[side].lost=0;
     state[side].lastRx=null; state[side].grfN=0;
     copTrace[side]=[]; setStatus(side,false);
   });
@@ -611,14 +658,18 @@ function downloadCsv() {
   if (!records.length) { log("CSV: nessun dato"); return; }
   const pid=(el.patientId?.value||"").trim();
   const stamp=new Date().toISOString().replace(/[:.]/g,"-");
-  const fname=`SmartInsole_${pid?pid+"_":""}session_${stamp}.csv`;
+  // [v2] the ID field holds the trial name (e.g. P01_walk_self_03): file = <trial>_<time>.csv
+  const safe=pid.replace(/[^A-Za-z0-9_\-]/g,"_");
+  const fname=safe?`${safe}_${stamp}.csv`:`SmartInsole_session_${stamp}.csv`;
   const header=["iso","t_ms","rel_ms","foot","kind",
     "s2_adc","s3_adc","s4_adc","s5_adc","s6_adc",
-    "s2_n","s3_n","s4_n","s5_n","s6_n","grf_n","pitch_deg","roll_deg"].join(",");
+    "s2_n","s3_n","s4_n","s5_n","s6_n","grf_n","pitch_deg","roll_deg",
+    "t_perf_ms","t_dev_ms","seq","ax","ay","az","gx","gy","gz"].join(",");   // [v2] new columns appended
   const lines=[header,...records.map(r=>[
     r.iso,r.t_ms,r.rel_ms,r.foot,r.kind,
     r.s2_adc,r.s3_adc,r.s4_adc,r.s5_adc,r.s6_adc,
-    r.s2_n,r.s3_n,r.s4_n,r.s5_n,r.s6_n,r.grf_n,r.pitch_deg,r.roll_deg
+    r.s2_n,r.s3_n,r.s4_n,r.s5_n,r.s6_n,r.grf_n,r.pitch_deg,r.roll_deg,
+    r.t_perf_ms,r.t_dev_ms,r.seq,r.ax,r.ay,r.az,r.gx,r.gy,r.gz
   ].map(toCsvValue).join(","))];
   const blob=new Blob([lines.join("\n")],{type:"text/csv;charset=utf-8"});
   const url=URL.createObjectURL(blob);
@@ -626,6 +677,29 @@ function downloadCsv() {
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
   log(`CSV scaricato ✅ (${fname})`);
+}
+
+// ── [v2] Firmware commands: sampling rate
+async function sendCmd(side,cmd) {
+  const s=state[side];
+  if (!s.device||!s.ctrl) return false;
+  await s.ctrl.writeValue(new TextEncoder().encode(cmd+"\n"));
+  log(`${side}: ${cmd}`);
+  return true;
+}
+async function applyRate() {
+  const sel=document.getElementById("selRate");
+  const v=sel?sel.value:"100";
+  const cmds={ "100":["SET SI:10,RI:10","SET IMU:20"],
+               "50": ["SET SI:20,RI:20","SET IMU:20"],
+               "old":["SET SI:50,RI:200","SET IMU:100"] }[v];
+  let n=0;
+  for (const side of ["Right","Left"]) {
+    try { for (const c of cmds) { if (await sendCmd(side,c)) n++; } }
+    catch(e) { log(`${side} ERR comando: ${e?.message||e}`); }
+  }
+  if (!n) log("Frequenza: nessuna soletta connessa");
+  for (const side of ["Right","Left"]) state[side].lost=0;
 }
 
 // ── Init 3D when Three.js is ready
@@ -636,8 +710,8 @@ function tryInit3D() {
 
 // ── Wire up
 if (el.log) el.log.textContent="";
-if (el.jsOk) el.jsOk.textContent="JS caricato ✅";
-log("JS caricato ✅");
+if (el.jsOk) el.jsOk.textContent=`JS caricato ✅ (app ${APP_VERSION})`;
+log(`JS caricato ✅ (app ${APP_VERSION})`);
 
 if (el.chkKg) el.chkKg.addEventListener("change",()=>{ showKg=!!el.chkKg.checked; updateOut(); });
 if (el.btnRight) el.btnRight.addEventListener("click",()=>connectSide("Right").catch(e=>log(`Right ERR: ${e?.message||e}`)));
@@ -650,6 +724,8 @@ if (el.btnReset)      el.btnReset.addEventListener("click",resetAll);
 if (el.btnRecStart)   el.btnRecStart.addEventListener("click",recStart);
 if (el.btnRecStop)    el.btnRecStop.addEventListener("click",recStop);
 if (el.btnRecDownload) el.btnRecDownload.addEventListener("click",downloadCsv);
+const btnRate=document.getElementById("btnRate");
+if (btnRate) btnRate.addEventListener("click",()=>applyRate());
 
 setRecStatus();
 updateOut();
