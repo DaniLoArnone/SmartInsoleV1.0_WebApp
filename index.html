@@ -30,12 +30,20 @@
   <label><input type="checkbox" id="chkKg"> Mostra kg</label>
   <button id="btnZeroIMU">Zero IMU</button>
   <button id="btnReset">Reset</button>
+  <label style="margin-left:16px">Frequenza
+    <select id="selRate">
+      <option value="100" selected>FSR 100 Hz, IMU 50 Hz</option>
+      <option value="50">FSR 50 Hz, IMU 50 Hz</option>
+      <option value="old">Vecchia (FSR media 5 Hz, IMU 10 Hz)</option>
+    </select>
+  </label>
+  <button id="btnRate">Applica frequenza</button>
 </div>
 
 <!-- ── Session Recorder ── -->
 <h3>Session Recorder</h3>
 <div class="row-wrap">
-  <input id="patientId" placeholder="Patient ID (opz.)" />
+  <input id="patientId" placeholder="Nome prova (es. P01_walk_self_03)" />
   <button id="btnRecStart">REC Start</button>
   <button id="btnRecStop" disabled>REC Stop</button>
   <button id="btnRecDownload" disabled>Download CSV</button>
@@ -92,7 +100,7 @@
 
 <!-- Three.js r128 -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 
 <!-- Colorbar init (after app.js defines heatColor) -->
 <script>
